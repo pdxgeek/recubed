@@ -21,6 +21,7 @@ import {
   parseAlg,
   vecKey,
 } from '../core';
+import { Algorithm, ALGORITHMS_BY_ID } from '../algorithms';
 import { CubeError, colorToFaceMap, stateToCubie, isCubieSolved } from '../cubie';
 import { CubeRotation, relabelMoves } from '../orientation';
 import { SolveStage, solveBeginner } from './beginner';
@@ -39,6 +40,13 @@ export interface PlanStep {
   detail: string;
   /** The algorithm this step uses, when it uses one worth learning. */
   algorithm?: string;
+  /**
+   * That algorithm's id in `src/cube/algorithms.ts`. The name is what the
+   * learner is told; the id is what the "why this works" sheet joins on. Two
+   * vocabularies matched by string were empty for twelve of the fifteen
+   * algorithms the beginner plan uses - see `algorithmForStep`.
+   */
+  algorithmId?: string;
   /** The moves written out, for the learner to read and remember. */
   notation: string;
   moves: Move[];
@@ -204,6 +212,49 @@ export function describeCubie(state: CubeState, pos: Vec3): string {
 
 const sentenceCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
+/**
+ * The library entry a step is teaching.
+ *
+ * Joined by id, never by name. The beginner solver calls the middle-layer
+ * insertion "Insert right" because that is what a learner is told to do; the
+ * reference set calls the same eight moves "Second layer, edge goes right".
+ * Matching those strings resolved 8 of 15 and left the flagship teaching sheet
+ * with nothing to say on the rest. `verify-plan.ts` asserts the join holds for
+ * every step of a generated plan, so renaming either side fails the suite
+ * instead of silently emptying the sheet.
+ */
+export function algorithmForStep(step: PlanStep): Algorithm | undefined {
+  return step.algorithmId ? ALGORITHMS_BY_ID.get(step.algorithmId) : undefined;
+}
+
+/** A piece's name from its colour key - "white-green-orange corner". */
+export function nameOfPieceKey(key: string): string {
+  const ids = key.split('') as ColorId[];
+  const kind = ids.length === 3 ? 'corner' : ids.length === 2 ? 'edge' : 'centre';
+  return `${orderedColours(ids).join('-')} ${kind}`;
+}
+
+/**
+ * The pieces a step is about, named so the learner can find them on the cube.
+ *
+ * By colour, out of `pieceKeys` - deliberately not by asking what is standing
+ * in the step's target *slots* right now. That is what the sheet used to do,
+ * and since the step's own moves push pieces through those slots the list
+ * changed under the learner as they stepped: the white-green edge a step is
+ * named after dropped off the list that told them to watch it, and a piece with
+ * nothing to do with the step took its place. A colour key survives every move
+ * and every re-labelling of the cube, so this list cannot drift.
+ */
+export function piecesToWatch(step: PlanStep): string[] {
+  const out: string[] = [];
+  for (const key of step.pieceKeys) {
+    if (key.length < 2 || key.includes('?')) continue;
+    const name = nameOfPieceKey(key);
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
 const MOVABLE_CUBIES = CUBIES.filter((p) => cubieKind(p) >= 2);
 /** Slot indices per cubie, and the centre slot each of them answers to. */
 const SLOT_CACHE = new Map<string, number[]>(
@@ -302,6 +353,7 @@ export function buildPlan(state: CubeState): SolvePlan {
           title: named ? sentenceCase(named) : step.title || step.algorithm || stage.title,
           detail: step.detail,
           algorithm: step.algorithm,
+          algorithmId: step.algorithmId,
           notation: formatAlg(step.moves),
           moves: step.moves,
           prelude: [...prelude],

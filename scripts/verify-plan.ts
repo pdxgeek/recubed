@@ -3,13 +3,17 @@
  * through the app's own facelet engine and confirm the cube ends up solved.
  * This covers the whole-cube setup rotation that the beginner solve starts with.
  */
-import { CubeState, applyAlg, isSolved, solvedState, parseAlg } from '../src/cube/core';
+import { CubeState, SLOTS, applyAlg, isSolved, solvedState, parseAlg, vecKey } from '../src/cube/core';
 import { BASIC_MOVES } from '../src/cube/cubie';
 import {
+  algorithmForStep,
   buildPlan,
   buildShortest,
   cubeKey,
   currentShortest,
+  describeCubie,
+  nameOfPieceKey,
+  piecesToWatch,
   relabelMethod,
   stageProgress,
 } from '../src/cube/solver/plan';
@@ -196,6 +200,138 @@ for (let i = 0; i < N; i++) {
     );
   } else {
     console.log(`ok    all ${checked} step rows have a distinct title and a tag that adds to it`);
+  }
+}
+
+// --- the "why this works" sheet has something to say about every step -------
+//
+// The sheet's whole payload is the library entry behind the step: the "What it
+// does" paragraph and the corner/edge footnote both come from it. Joining the
+// solver's vocabulary to the library's by *name* resolved 8 of 15 algorithms
+// and carried a note on 3, so twelve of fifteen steps opened an explanation
+// screen with no explanation on it. Nothing failed - the JSX simply rendered
+// nothing - which is exactly the class of bug a test has to catch.
+{
+  const missingId = new Map<string, number>();
+  const unresolved = new Map<string, number>();
+  const noteless = new Map<string, number>();
+  const thin = new Map<string, string>();
+  const used = new Set<string>();
+  let checked = 0;
+
+  for (let i = 0; i < 8; i++) {
+    const plan = buildPlan(applyAlg(solvedState(), scramble()));
+    if (!plan.ok) continue;
+    for (const method of plan.methods) {
+      for (const st of method.steps) {
+        if (!st.algorithm) continue;
+        checked++;
+        used.add(st.algorithm);
+        if (!st.algorithmId) {
+          missingId.set(st.algorithm, (missingId.get(st.algorithm) ?? 0) + 1);
+          continue;
+        }
+        const alg = algorithmForStep(st);
+        if (!alg) {
+          unresolved.set(st.algorithm, (unresolved.get(st.algorithm) ?? 0) + 1);
+          continue;
+        }
+        if (!alg.note) {
+          noteless.set(st.algorithm, (noteless.get(st.algorithm) ?? 0) + 1);
+          continue;
+        }
+        // A note that is a two-word label ("The workhorse") renders as a
+        // heading with nothing under it. The bar is a sentence that explains
+        // the mechanism, so the shape of one is enforced rather than trusted.
+        if (alg.note.length < 60 || !/[.]$/.test(alg.note)) {
+          thin.set(st.algorithm, alg.note);
+        }
+      }
+    }
+  }
+
+  const broken =
+    missingId.size + unresolved.size + noteless.size + thin.size;
+  if (broken > 0) {
+    fails++;
+    console.log(
+      `FAIL  ${broken} of ${used.size} algorithms the plan uses cannot fill the "why this works" sheet`
+    );
+    for (const [name, n] of missingId) console.log(`      no algorithmId at all: "${name}" (${n} steps)`);
+    for (const [name, n] of unresolved) console.log(`      id resolves to nothing: "${name}" (${n} steps)`);
+    for (const [name, n] of noteless) console.log(`      library entry has no note: "${name}" (${n} steps)`);
+    for (const [name, note] of thin) console.log(`      note is a label, not an explanation: "${name}" -> "${note}"`);
+  } else {
+    console.log(
+      `ok    all ${used.size} algorithms used across ${checked} steps resolve to a library entry with a real note`
+    );
+  }
+}
+
+// --- "Watch these" names the step's own pieces, and keeps naming them -------
+//
+// The list used to be built by asking `describeCubie` who was standing in the
+// step's target *slots*. The step's own moves push pieces through those slots,
+// so the list re-ordered mid-step on 146 of 146 steps and changed membership on
+// 136 - the piece the step is named after dropped off the list telling the
+// learner to watch it. Naming by colour key cannot drift, and this asserts both
+// halves: the names are the step's own pieces, and they survive its moves.
+{
+  let outsiders = 0;
+  let drifted = 0;
+  let empty = 0;
+  let checked = 0;
+  let positionalWouldDrift = 0;
+
+  for (let i = 0; i < 4; i++) {
+    const start = applyAlg(solvedState(), scramble());
+    const plan = buildPlan(start);
+    if (!plan.ok) continue;
+    const beginner = plan.methods.find((m) => m.id === 'beginner');
+    if (!beginner) continue;
+
+    for (const st of beginner.steps) {
+      if (st.pieceKeys.length === 0) continue;
+      checked++;
+      const own = new Set(st.pieceKeys.map(nameOfPieceKey));
+      const base = piecesToWatch(st);
+      if (base.length === 0) empty++;
+      for (const name of base) if (!own.has(name)) outsiders++;
+
+      // Step through the step's own moves and re-ask.
+      let cube = applyAlg(start, st.prelude);
+      const positionalAt = (state: CubeState) => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const slot of st.targetSlots) {
+          const key = vecKey(SLOTS[slot].pos);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const name = describeCubie(state, SLOTS[slot].pos);
+          if (!name.startsWith('?') && !name.endsWith('centre')) out.push(name);
+        }
+        return out.join(' | ');
+      };
+      const positionalStart = positionalAt(cube);
+      for (const mv of st.moves) {
+        cube = applyAlg(cube, [mv]);
+        if (piecesToWatch(st).join(' | ') !== base.join(' | ')) drifted++;
+      }
+      if (positionalAt(cube) !== positionalStart) positionalWouldDrift++;
+    }
+  }
+
+  if (outsiders || drifted || empty) {
+    fails++;
+    console.log(
+      `FAIL  "Watch these" is wrong on ${checked} steps: ${outsiders} names outside the ` +
+      `step's own pieces, ${drifted} lists that changed mid-step, ${empty} empty lists`
+    );
+  } else {
+    console.log(
+      `ok    all ${checked} steps name their own pieces and keep naming them ` +
+      `(the slot-based list would have drifted on ${positionalWouldDrift})`
+    );
   }
 }
 

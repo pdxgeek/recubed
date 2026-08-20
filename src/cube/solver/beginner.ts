@@ -27,6 +27,18 @@ export interface SolveStep {
   detail: string;
   /** Name of the taught algorithm, when the step uses one. */
   algorithm?: string;
+  /**
+   * The library entry that name belongs to, by id.
+   *
+   * The solver and `src/cube/algorithms.ts` speak different vocabularies on
+   * purpose - "Insert right" is what a learner is told, "Second layer, edge
+   * goes right" is what the reference set calls it - and for three rounds the
+   * "why this works" sheet joined them by string matching, so twelve of the
+   * fifteen algorithms the beginner plan uses resolved to nothing and the sheet
+   * had no explanation to show. The id is the join, and `verify-plan.ts`
+   * asserts every step carries one that resolves to an entry with a note.
+   */
+  algorithmId?: string;
   moves: Move[];
   /**
    * The piece this step is dealing with, where it sits as the step begins.
@@ -97,26 +109,30 @@ const AUF = ['', 'U', 'U2', "U'"];
 // ---------------------------------------------------------------------------
 
 interface NamedAlg {
+  /** Id of the matching entry in `src/cube/algorithms.ts`. */
+  id: string;
   name: string;
   alg: string;
 }
 
 const YELLOW_CROSS: NamedAlg[] = [
-  { name: 'Yellow cross', alg: "F R U R' U' F'" },
+  { id: 'beg-cross', name: 'Yellow cross', alg: "F R U R' U' F'" },
 ];
 const ORIENT_CORNERS: NamedAlg[] = [
-  { name: 'Sune', alg: "R U R' U R U2 R'" },
-  { name: 'Anti-Sune', alg: "R U2 R' U' R U' R'" },
+  { id: 'oll-sune', name: 'Sune', alg: "R U R' U R U2 R'" },
+  { id: 'oll-antisune', name: 'Anti-Sune', alg: "R U2 R' U' R U' R'" },
 ];
 const PERMUTE_CORNERS: NamedAlg[] = [
-  { name: 'Corner 3-cycle', alg: "U R U' L' U R' U' L" },
-  { name: 'Corner 3-cycle (reverse)', alg: "L' U R U' L U R' U'" },
-  { name: 'T perm (swap two corners and two edges)', alg: "R U R' U' R' F R2 U' R' U' R U R' F'" },
+  { id: 'beg-corner-pos', name: 'Corner 3-cycle', alg: "U R U' L' U R' U' L" },
+  { id: 'beg-corner-pos-rev', name: 'Corner 3-cycle (reverse)', alg: "L' U R U' L U R' U'" },
+  { id: 'pll-t', name: 'T perm (swap two corners and two edges)', alg: "R U R' U' R' F R2 U' R' U' R U R' F'" },
 ];
 const PERMUTE_EDGES: NamedAlg[] = [
-  { name: 'Edge 3-cycle (clockwise)', alg: "R U' R U R U R U' R' U' R2" },
-  { name: 'Edge 3-cycle (anticlockwise)', alg: "R2 U R U R' U' R' U' R' U R'" },
+  { id: 'beg-edge-cycle', name: 'Edge 3-cycle (clockwise)', alg: "R U' R U R U R U' R' U' R2" },
+  { id: 'beg-edge-cycle-rev', name: 'Edge 3-cycle (anticlockwise)', alg: "R2 U R U R' U' R' U' R' U R'" },
 ];
+/** A bare U turn to finish on, which is a step in the plan like any other. */
+const LINE_UP: NamedAlg = { id: 'beg-auf', name: 'Line the top layer up', alg: 'U' };
 
 /**
  * Shortest chain of `vocabulary` entries (each optionally preceded by a U turn)
@@ -129,17 +145,17 @@ function findAlgChain(
   vocabulary: NamedAlg[],
   maxApplications: number,
   allowFinalAuf = true
-): { name: string; alg: string }[] | null {
+): NamedAlg[] | null {
   interface Node {
     cube: CubieCube;
-    used: { name: string; alg: string }[];
+    used: NamedAlg[];
   }
-  const finish = (node: Node): { name: string; alg: string }[] | null => {
+  const finish = (node: Node): NamedAlg[] | null => {
     if (goal(node.cube)) return node.used;
     if (!allowFinalAuf) return null;
     for (const auf of AUF.slice(1)) {
       if (goal(applyAlgCubie(node.cube, auf))) {
-        return [...node.used, { name: 'Line the top layer up', alg: auf }];
+        return [...node.used, { ...LINE_UP, alg: auf }];
       }
     }
     return null;
@@ -158,7 +174,7 @@ function findAlgChain(
           const cube = applyAlgCubie(node.cube, full);
           const child: Node = {
             cube,
-            used: [...node.used, { name: entry.name, alg: full }],
+            used: [...node.used, { id: entry.id, name: entry.name, alg: full }],
           };
           const result = finish(child);
           if (result) return result;
@@ -235,11 +251,11 @@ function solveCross(cube: CubieCube): { cube: CubieCube; stage: SolveStage } {
  * sexy move until it drops in. It disturbs nothing in the cross and no other
  * first-layer corner, which is exactly why it is the one beginners learn.
  */
-const CORNER_INSERT: Record<number, { alg: string; name: string; above: number }> = {
-  [Corner.DFR]: { alg: "R U R' U'", name: 'Sexy move', above: Corner.URF },
-  [Corner.DLF]: { alg: "F U F' U'", name: 'Sexy move (front)', above: Corner.UFL },
-  [Corner.DBL]: { alg: "L U L' U'", name: 'Sexy move (left)', above: Corner.ULB },
-  [Corner.DRB]: { alg: "B U B' U'", name: 'Sexy move (back)', above: Corner.UBR },
+const CORNER_INSERT: Record<number, { alg: string; name: string; id: string; above: number }> = {
+  [Corner.DFR]: { alg: "R U R' U'", name: 'Sexy move', id: 'trig-sexy', above: Corner.URF },
+  [Corner.DLF]: { alg: "F U F' U'", name: 'Sexy move (front)', id: 'trig-sexy', above: Corner.UFL },
+  [Corner.DBL]: { alg: "L U L' U'", name: 'Sexy move (left)', id: 'trig-sexy', above: Corner.ULB },
+  [Corner.DRB]: { alg: "B U B' U'", name: 'Sexy move (back)', id: 'trig-sexy', above: Corner.UBR },
 };
 
 function solveFirstCorners(cube: CubieCube): { cube: CubieCube; stage: SolveStage } {
@@ -293,6 +309,7 @@ function solveFirstCorners(cube: CubieCube): { cube: CubieCube; stage: SolveStag
         `then repeat ${insert.alg} until it drops in. It comes out and goes back a little ` +
         `differently each time until it lands the right way up.`,
       algorithm: insert.name,
+      algorithmId: insert.id,
       moves: parseAlg(parts.join(' ')),
       focus: [from],
       destination: CORNER_POSITION[target],
@@ -381,6 +398,7 @@ function solveMiddleLayer(cube: CubieCube): { cube: CubieCube; stage: SolveStage
         ? 'This slot holds an edge the wrong way round. Send any top edge in to knock it out, then place it properly.'
         : `Line the edge up with its centre, then send it ${chosen.insert.dir} into the slot.`,
       algorithm: chosen.insert.dir === 'right' ? 'Insert right' : 'Insert left',
+      algorithmId: chosen.insert.dir === 'right' ? 'beg-second-right' : 'beg-second-left',
       moves: parseAlg(chosen.full),
     });
   }
@@ -422,6 +440,7 @@ function lastLayerStage(
       title: action,
       detail,
       algorithm: entry.name,
+      algorithmId: entry.id,
       moves: parseAlg(entry.alg),
       // The last layer is worked as a group, so there is no single destination.
       // The pieces the algorithm actually displaces are the next best thing:

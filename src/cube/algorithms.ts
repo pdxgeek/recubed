@@ -48,7 +48,16 @@ const DEFS: AlgorithmDef[] = [
   { id: 'pll-nb', name: 'Nb perm', category: 'PLL', alg: "R' U R U' R' F' U' F R U R' F R' F' R U' R" },
   { id: 'pll-ra', name: 'Ra perm', category: 'PLL', alg: "R U' R' U' R U R D R' U' R D' R' U2 R' U'", note: 'Adjacent corner + edge swap (final AUF included)' },
   { id: 'pll-rb', name: 'Rb perm', category: 'PLL', alg: "R2 F R U R U' R' F' R U2 R' U2 R U", note: 'Adjacent corner + edge swap (final AUF included)' },
-  { id: 'pll-t', name: 'T perm', category: 'PLL', alg: "R U R' U' R' F R2 U' R' U' R U R' F'", note: 'The workhorse' },
+  {
+    id: 'pll-t',
+    name: 'T perm',
+    category: 'PLL',
+    alg: "R U R' U' R' F R2 U' R' U' R U R' F'",
+    note:
+      'Swaps two neighbouring top corners with each other and two top edges with each other, in ' +
+      'one pass - four pieces, and nothing else on the cube. Running it a second time undoes it ' +
+      'exactly, which is a quick way to check you have performed it correctly.',
+  },
   { id: 'pll-ua', name: 'Ua perm', category: 'PLL', alg: "M2 U M U2 M' U M2", note: 'Edge 3-cycle, clockwise' },
   { id: 'pll-ub', name: 'Ub perm', category: 'PLL', alg: "M2 U' M U2 M' U' M2", note: 'Edge 3-cycle, anticlockwise' },
   { id: 'pll-v', name: 'V perm', category: 'PLL', alg: "R' U R' U' y R' F' R2 U' R' U R' F R F y'", note: 'Diagonal corner + edge swap' },
@@ -59,8 +68,27 @@ const DEFS: AlgorithmDef[] = [
   { id: 'oll-dot', name: 'OLL edges: dot', category: 'OLL', alg: "F R U R' U' F' Fw R U R' U' Fw'", note: 'No edges oriented' },
   { id: 'oll-line', name: 'OLL edges: line', category: 'OLL', alg: "F R U R' U' F'", note: 'Horizontal bar' },
   { id: 'oll-lshape', name: 'OLL edges: L shape', category: 'OLL', alg: "Fw R U R' U' Fw'", note: 'Bent pair' },
-  { id: 'oll-sune', name: 'Sune', category: 'OLL', alg: "R U R' U R U2 R'", note: 'One corner oriented' },
-  { id: 'oll-antisune', name: 'Anti-Sune', category: 'OLL', alg: "R U2 R' U' R U' R'", note: 'Mirror of Sune' },
+  {
+    id: 'oll-sune',
+    name: 'Sune',
+    category: 'OLL',
+    alg: "R U R' U R U2 R'",
+    note:
+      'Twists three of the four top corners and leaves the fourth alone. R pulls the first two ' +
+      'layers apart and R\' puts them back inside the algorithm, which is how it can rearrange ' +
+      'the top without costing anything below. Repeat it - three goes at most - until the whole ' +
+      'top face is one colour.',
+  },
+  {
+    id: 'oll-antisune',
+    name: 'Anti-Sune',
+    category: 'OLL',
+    alg: "R U2 R' U' R U' R'",
+    note:
+      'Sune run the other way: the same three corners, twisted in the opposite direction. Use ' +
+      'whichever of the two needs fewer repetitions for the case in front of you - both leave ' +
+      'the first two layers exactly as they were.',
+  },
   { id: 'oll-h', name: 'OLL H / double Sune', category: 'OLL', alg: "R U R' U R U' R' U R U2 R'" },
   { id: 'oll-pi', name: 'OLL Pi', category: 'OLL', alg: "R U2 R2 U' R2 U' R2 U2 R" },
   { id: 'oll-t', name: 'OLL T', category: 'OLL', alg: "Rw U R' U' Rw' F R F'" },
@@ -78,7 +106,18 @@ const DEFS: AlgorithmDef[] = [
   { id: 'f2l-niklas-mirror', name: 'Niklas (mirror)', category: 'F2L', alg: "L' U R U' L U R'" },
 
   // ---- Triggers: the small pieces everything is built from -------------
-  { id: 'trig-sexy', name: 'Sexy move', category: 'Triggers', alg: "R U R' U'" },
+  {
+    id: 'trig-sexy',
+    name: 'Sexy move',
+    category: 'Triggers',
+    alg: "R U R' U'",
+    note:
+      'Takes the corner out of the front-right slot with R, spins the top, and puts it back a ' +
+      'third of a turn over. Only four corners and three edges ever move, all of them in the top ' +
+      'layer or that one slot, so the rest of the first layer is never at risk - and six ' +
+      'repetitions bring the cube back exactly to where it started, which is why you can keep ' +
+      'going until the corner lands the right way up.',
+  },
   { id: 'trig-sexy-inv', name: 'Reverse sexy', category: 'Triggers', alg: "U R U' R'" },
   { id: 'trig-lefty', name: 'Lefty sexy', category: 'Triggers', alg: "L' U' L U" },
   { id: 'trig-sledge', name: 'Sledgehammer', category: 'Triggers', alg: "R' F R F'" },
@@ -87,12 +126,90 @@ const DEFS: AlgorithmDef[] = [
 
   // ---- Beginner method --------------------------------------------------
   { id: 'beg-daisy-corner', name: 'First layer corner', category: 'Beginner', alg: "R' D' R D", note: 'Repeat until the corner drops in' },
-  { id: 'beg-second-right', name: 'Second layer, edge goes right', category: 'Beginner', alg: "U R U' R' U' F' U F" },
-  { id: 'beg-second-left', name: 'Second layer, edge goes left', category: 'Beginner', alg: "U' L' U L U F U' F'" },
-  { id: 'beg-cross', name: 'Yellow cross', category: 'Beginner', alg: "F R U R' U' F'" },
-  { id: 'beg-corner-pos', name: 'Position last corners', category: 'Beginner', alg: "U R U' L' U R' U' L" },
+  {
+    id: 'beg-second-right',
+    name: 'Second layer, edge goes right',
+    category: 'Beginner',
+    alg: "U R U' R' U' F' U F",
+    note:
+      'Sends the corner above the front-right slot up out of the way, drops the edge into the ' +
+      'gap behind it, then puts the corner straight back. The two halves are mirror images of ' +
+      'each other - U R U\' R\' and then U\' F\' U F - which is why the first layer ends up ' +
+      'untouched even though it comes apart in the middle.',
+  },
+  {
+    id: 'beg-second-left',
+    name: 'Second layer, edge goes left',
+    category: 'Beginner',
+    alg: "U' L' U L U F U' F'",
+    note:
+      'The same insertion mirrored, for an edge that has to travel left instead of right. The ' +
+      'corner above the front-left slot is lifted, the edge is fed in underneath it, and the ' +
+      'corner is put back - so nothing already finished below is disturbed.',
+  },
+  {
+    id: 'beg-cross',
+    name: 'Yellow cross',
+    category: 'Beginner',
+    alg: "F R U R' U' F'",
+    note:
+      'Turns the top edges over. F opens the top layer, the sexy move turns what is inside it, ' +
+      'and F\' folds it back, so the first two layers are put back exactly as they were. Each ' +
+      'run moves the shape one step along - a dot becomes an L, an L becomes a line, a line ' +
+      'becomes the cross - so three goes finish it whatever you start from.',
+  },
+  {
+    id: 'beg-corner-pos',
+    name: 'Position last corners',
+    category: 'Beginner',
+    alg: "U R U' L' U R' U' L",
+    note:
+      'Sends three top corners round in a ring and leaves the fourth exactly where it is. No ' +
+      'edge moves at all, which is what makes it safe to run before the edges are sorted out. ' +
+      'Find a corner that is already home, hold it at the front-right, and one or two goes place ' +
+      'the other three.',
+  },
+  {
+    id: 'beg-corner-pos-rev',
+    name: 'Position last corners (the other way)',
+    category: 'Beginner',
+    alg: "L' U R U' L U R' U'",
+    note:
+      'The same corner ring, sent round the other way. Three corners move, the fourth and every ' +
+      'edge stay put. Picking the direction that needs one go rather than two is the whole ' +
+      'reason for learning both.',
+  },
   { id: 'beg-corner-orient', name: 'Orient last corners', category: 'Beginner', alg: "R' D' R D R' D' R D", note: 'Repeat per corner, keep U facing you' },
-  { id: 'beg-edge-cycle', name: 'Cycle last edges', category: 'Beginner', alg: "R U' R U R U R U' R' U' R2" },
+  {
+    id: 'beg-edge-cycle',
+    name: 'Cycle last edges',
+    category: 'Beginner',
+    alg: "R U' R U R U R U' R' U' R2",
+    note:
+      'Sends three top edges round and leaves the fourth alone. Not one corner moves, so the ' +
+      'corners you have just placed cannot be knocked out. Hold the edge that is already correct ' +
+      'at the back; if none of them is correct, one run from anywhere fixes one and the second ' +
+      'run finishes the cube.',
+  },
+  {
+    id: 'beg-edge-cycle-rev',
+    name: 'Cycle last edges (the other way)',
+    category: 'Beginner',
+    alg: "R2 U R U R' U' R' U' R' U R'",
+    note:
+      'The same three edges sent round the other way. Corners are untouched here too. Reading ' +
+      'which way the three need to travel before you start is what turns two runs into one.',
+  },
+  {
+    id: 'beg-auf',
+    name: 'Line the top layer up',
+    category: 'Beginner',
+    alg: 'U',
+    note:
+      'Not an algorithm at all - just a turn of the top face. Every piece up there is already ' +
+      'in the right order relative to its neighbours, so all that is left is to rotate the whole ' +
+      'ring until the side colours meet the centres below.',
+  },
 ];
 
 function build(def: AlgorithmDef): Algorithm {
