@@ -1,0 +1,147 @@
+import {
+  Move,
+  Vec3,
+  algAffectedCubies,
+  algAffectedSlots,
+  cubieKind,
+  parseAlg,
+  vecKey,
+} from './core';
+
+export type AlgCategory = 'PLL' | 'OLL' | 'F2L' | 'Triggers' | 'Beginner';
+
+export const CATEGORY_ORDER: AlgCategory[] = ['PLL', 'OLL', 'F2L', 'Triggers', 'Beginner'];
+
+export interface AlgorithmDef {
+  id: string;
+  name: string;
+  category: AlgCategory;
+  alg: string;
+  note?: string;
+}
+
+export interface Algorithm extends AlgorithmDef {
+  moves: Move[];
+  /** Cubie positions this algorithm displaces, on a solved cube. */
+  targets: Vec3[];
+  targetKeys: Set<string>;
+  /** Slot indices it displaces - used to follow the pieces while stepping. */
+  targetSlots: number[];
+  corners: number;
+  edges: number;
+}
+
+const DEFS: AlgorithmDef[] = [
+  // ---- PLL: permute the last layer -------------------------------------
+  { id: 'pll-aa', name: 'Aa perm', category: 'PLL', alg: "x R' U R' D2 R U' R' D2 R2 x'", note: 'Corner 3-cycle' },
+  { id: 'pll-ab', name: 'Ab perm', category: 'PLL', alg: "x R2 D2 R U R' D2 R U' R x'", note: 'Corner 3-cycle' },
+  { id: 'pll-e', name: 'E perm', category: 'PLL', alg: "x' R U' R' D R U R' D' R U R' D R U' R' D' x", note: 'Two corner swaps' },
+  { id: 'pll-f', name: 'F perm', category: 'PLL', alg: "R' U' F' R U R' U' R' F R2 U' R' U' R U R' U R", note: 'Adjacent swap + edge 3-cycle' },
+  { id: 'pll-ga', name: 'Ga perm', category: 'PLL', alg: "R2 U R' U R' U' R U' R2 U' D R' U R D' U", note: 'Corner + edge 3-cycle (final AUF included)' },
+  { id: 'pll-gb', name: 'Gb perm', category: 'PLL', alg: "R' U' R U D' R2 U R' U R U' R U' R2 D U", note: 'Corner + edge 3-cycle (final AUF included)' },
+  { id: 'pll-gc', name: 'Gc perm', category: 'PLL', alg: "R2 U' R U' R U R' U R2 U D' R U' R' D U", note: 'Corner + edge 3-cycle (final AUF included)' },
+  { id: 'pll-gd', name: 'Gd perm', category: 'PLL', alg: "R U R' U' D R2 U' R U' R' U R' U R2 D' U", note: 'Corner + edge 3-cycle (final AUF included)' },
+  { id: 'pll-h', name: 'H perm', category: 'PLL', alg: 'M2 U M2 U2 M2 U M2', note: 'Swaps both edge pairs' },
+  { id: 'pll-ja', name: 'Ja perm', category: 'PLL', alg: "R' U L' U2 R U' R' U2 R L U'", note: 'Adjacent corner + edge swap (final AUF included)' },
+  { id: 'pll-jb', name: 'Jb perm', category: 'PLL', alg: "R U R' F' R U R' U' R' F R2 U' R' U'" },
+  { id: 'pll-na', name: 'Na perm', category: 'PLL', alg: "R U R' U R U R' F' R U R' U' R' F R2 U' R' U2 R U' R'" },
+  { id: 'pll-nb', name: 'Nb perm', category: 'PLL', alg: "R' U R U' R' F' U' F R U R' F R' F' R U' R" },
+  { id: 'pll-ra', name: 'Ra perm', category: 'PLL', alg: "R U' R' U' R U R D R' U' R D' R' U2 R' U'", note: 'Adjacent corner + edge swap (final AUF included)' },
+  { id: 'pll-rb', name: 'Rb perm', category: 'PLL', alg: "R2 F R U R U' R' F' R U2 R' U2 R U", note: 'Adjacent corner + edge swap (final AUF included)' },
+  { id: 'pll-t', name: 'T perm', category: 'PLL', alg: "R U R' U' R' F R2 U' R' U' R U R' F'", note: 'The workhorse' },
+  { id: 'pll-ua', name: 'Ua perm', category: 'PLL', alg: "M2 U M U2 M' U M2", note: 'Edge 3-cycle, clockwise' },
+  { id: 'pll-ub', name: 'Ub perm', category: 'PLL', alg: "M2 U' M U2 M' U' M2", note: 'Edge 3-cycle, anticlockwise' },
+  { id: 'pll-v', name: 'V perm', category: 'PLL', alg: "R' U R' U' y R' F' R2 U' R' U R' F R F y'", note: 'Diagonal corner + edge swap' },
+  { id: 'pll-y', name: 'Y perm', category: 'PLL', alg: "F R U' R' U' R U R' F' R U R' U' R' F R F'" },
+  { id: 'pll-z', name: 'Z perm', category: 'PLL', alg: "M' U M2 U M2 U M' U2 M2 U'", note: 'Two edge swaps (final AUF included)' },
+
+  // ---- OLL: orient the last layer (two-look set) ------------------------
+  { id: 'oll-dot', name: 'OLL edges: dot', category: 'OLL', alg: "F R U R' U' F' Fw R U R' U' Fw'", note: 'No edges oriented' },
+  { id: 'oll-line', name: 'OLL edges: line', category: 'OLL', alg: "F R U R' U' F'", note: 'Horizontal bar' },
+  { id: 'oll-lshape', name: 'OLL edges: L shape', category: 'OLL', alg: "Fw R U R' U' Fw'", note: 'Bent pair' },
+  { id: 'oll-sune', name: 'Sune', category: 'OLL', alg: "R U R' U R U2 R'", note: 'One corner oriented' },
+  { id: 'oll-antisune', name: 'Anti-Sune', category: 'OLL', alg: "R U2 R' U' R U' R'", note: 'Mirror of Sune' },
+  { id: 'oll-h', name: 'OLL H / double Sune', category: 'OLL', alg: "R U R' U R U' R' U R U2 R'" },
+  { id: 'oll-pi', name: 'OLL Pi', category: 'OLL', alg: "R U2 R2 U' R2 U' R2 U2 R" },
+  { id: 'oll-t', name: 'OLL T', category: 'OLL', alg: "Rw U R' U' Rw' F R F'" },
+  { id: 'oll-u', name: 'OLL U / headlights', category: 'OLL', alg: "R2 D R' U2 R D' R' U2 R'" },
+  { id: 'oll-l', name: 'OLL L', category: 'OLL', alg: "F R' F' Rw U R U' Rw'" },
+
+  // ---- F2L: pair and insert --------------------------------------------
+  { id: 'f2l-basic-right', name: 'Insert right pair', category: 'F2L', alg: "U R U' R'", note: 'Pair joined, insert front-right' },
+  { id: 'f2l-basic-left', name: 'Insert left pair', category: 'F2L', alg: "U' L' U L", note: 'Pair joined, insert front-left' },
+  { id: 'f2l-split-right', name: 'Split then insert (right)', category: 'F2L', alg: "R U' R' U R U' R'" },
+  { id: 'f2l-split-left', name: 'Split then insert (left)', category: 'F2L', alg: "F' U F U' F' U F" },
+  { id: 'f2l-three-move', name: 'Three-move insert', category: 'F2L', alg: "R U' R'", note: 'Corner in slot, edge above' },
+  { id: 'f2l-reset-slot', name: 'Pull pair out of slot', category: 'F2L', alg: "R U R'", note: 'Free a wrongly-built pair' },
+  { id: 'f2l-niklas', name: 'Niklas', category: 'F2L', alg: "R U' L' U R' U' L", note: 'Corner 3-cycle without breaking F2L' },
+  { id: 'f2l-niklas-mirror', name: 'Niklas (mirror)', category: 'F2L', alg: "L' U R U' L U R'" },
+
+  // ---- Triggers: the small pieces everything is built from -------------
+  { id: 'trig-sexy', name: 'Sexy move', category: 'Triggers', alg: "R U R' U'" },
+  { id: 'trig-sexy-inv', name: 'Reverse sexy', category: 'Triggers', alg: "U R U' R'" },
+  { id: 'trig-lefty', name: 'Lefty sexy', category: 'Triggers', alg: "L' U' L U" },
+  { id: 'trig-sledge', name: 'Sledgehammer', category: 'Triggers', alg: "R' F R F'" },
+  { id: 'trig-hedge', name: 'Hedgeslammer', category: 'Triggers', alg: "F R' F' R" },
+  { id: 'trig-sune-trigger', name: 'Sexy x3', category: 'Triggers', alg: "R U R' U' R U R' U' R U R' U'", note: 'Half of the six-cycle' },
+
+  // ---- Beginner method --------------------------------------------------
+  { id: 'beg-daisy-corner', name: 'First layer corner', category: 'Beginner', alg: "R' D' R D", note: 'Repeat until the corner drops in' },
+  { id: 'beg-second-right', name: 'Second layer, edge goes right', category: 'Beginner', alg: "U R U' R' U' F' U F" },
+  { id: 'beg-second-left', name: 'Second layer, edge goes left', category: 'Beginner', alg: "U' L' U L U F U' F'" },
+  { id: 'beg-cross', name: 'Yellow cross', category: 'Beginner', alg: "F R U R' U' F'" },
+  { id: 'beg-corner-pos', name: 'Position last corners', category: 'Beginner', alg: "U R U' L' U R' U' L" },
+  { id: 'beg-corner-orient', name: 'Orient last corners', category: 'Beginner', alg: "R' D' R D R' D' R D", note: 'Repeat per corner, keep U facing you' },
+  { id: 'beg-edge-cycle', name: 'Cycle last edges', category: 'Beginner', alg: "R U' R U R U R U' R' U' R2" },
+];
+
+function build(def: AlgorithmDef): Algorithm {
+  const moves = parseAlg(def.alg);
+  const targets = algAffectedCubies(moves);
+  let corners = 0;
+  let edges = 0;
+  for (const t of targets) {
+    if (cubieKind(t) === 3) corners++;
+    else if (cubieKind(t) === 2) edges++;
+  }
+  return {
+    ...def,
+    moves,
+    targets,
+    targetKeys: new Set(targets.map(vecKey)),
+    targetSlots: algAffectedSlots(moves),
+    corners,
+    edges,
+  };
+}
+
+export const ALGORITHMS: Algorithm[] = DEFS.map(build);
+
+export const ALGORITHMS_BY_ID = new Map(ALGORITHMS.map((a) => [a.id, a]));
+
+export interface SelectionMatch {
+  algorithms: Algorithm[];
+  /** True when every listed algorithm moves all the selected pieces. */
+  exact: boolean;
+}
+
+/**
+ * Algorithms that touch the given pieces. Ones that move all of them come
+ * first; if nothing moves the whole set, anything moving part of it is offered
+ * rather than leaving the list empty.
+ */
+export function algorithmsForSelection(selected: Vec3[]): SelectionMatch {
+  if (selected.length === 0) return { algorithms: ALGORITHMS, exact: true };
+  const keys = selected.map(vecKey);
+  const all = ALGORITHMS.filter((a) => keys.every((k) => a.targetKeys.has(k)));
+  if (all.length) return { algorithms: all, exact: true };
+
+  const partial = ALGORITHMS.map((a) => ({
+    a,
+    hits: keys.filter((k) => a.targetKeys.has(k)).length,
+  }))
+    .filter((x) => x.hits > 0)
+    .sort((x, y) => y.hits - x.hits || x.a.moves.length - y.a.moves.length)
+    .map((x) => x.a);
+  return { algorithms: partial, exact: false };
+}

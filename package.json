@@ -4,19 +4,29 @@
   "main": "index.ts",
   "dependencies": {
     "expo": "~57.0.14",
+    "expo-gl": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
-    "react-native": "0.86.2"
+    "react-native": "0.86.2",
+    "three": "^0.166.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "@types/three": "^0.166.0",
+    "tsx": "^4.23.12",
     "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "verify": "tsx scripts/verify-engine.ts && tsx scripts/verify-cubie.ts && tsx scripts/verify-orientation.ts && tsx scripts/verify-view.ts && tsx scripts/verify-pieces.ts && tsx scripts/verify-algs.ts && tsx scripts/verify-beginner.ts 300 && tsx scripts/verify-kociemba.ts 40 && tsx scripts/verify-plan.ts 30",
+    "typecheck": "tsc --noEmit"
   },
-  "private": true
+  "private": true,
+  "volta": {
+    "node": "20.20.2",
+    "npm": "10.9.9"
+  }
 }

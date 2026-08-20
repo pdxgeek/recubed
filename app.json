@@ -3,11 +3,12 @@
     "name": "recubed",
     "slug": "recubed",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.recubed.app"
     },
     "android": {
       "adaptiveIcon": {
