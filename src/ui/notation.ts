@@ -50,6 +50,18 @@ export function notationBlocks(notation: string[]): NotationBlock[] {
   });
 }
 
+/**
+ * The trigger a given move belongs to, or null if it belongs to none. The unit
+ * a cuber recalls is the trigger - "what does the sexy move expand to" - so a
+ * practise verdict is recorded against this rather than against the letter.
+ */
+export function chunkNameAt(notation: string[], move: number): string | null {
+  for (const b of notationBlocks(notation)) {
+    if (move >= b.start && move < b.start + b.all.length) return b.name;
+  }
+  return null;
+}
+
 /** The one-line form a collapsed row shows. */
 export function summaryLine(notation: string[]): string {
   return notationBlocks(notation)

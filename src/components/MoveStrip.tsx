@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Move } from '../cube/core';
 import { chunkByTriggers } from '../cube/algorithms';
+import { Recall } from '../learn/session';
 import { tokens } from '../ui/theme';
 
 interface Props {
@@ -17,6 +18,15 @@ interface Props {
   onReveal: () => void;
   /** Restarts the step so it can be practised again. */
   onAgain: () => void;
+  /**
+   * True once a move has been revealed and the learner has not yet said whether
+   * they knew it. Uncovering a move on its own tests nothing - the app never
+   * asked for an answer, so it could not tell recall from watching.
+   */
+  awaitingReport: boolean;
+  onReport: (outcome: Recall) => void;
+  /** "Done in 13 moves · 11 knew, 2 missed" - their own verdicts, not a guess. */
+  summary: string;
 }
 
 /** "R'" reads as "R apostrophe" otherwise. */
@@ -38,6 +48,9 @@ export function MoveStrip({
   onPractise,
   onReveal,
   onAgain,
+  awaitingReport,
+  onReport,
+  summary,
 }: Props) {
   const scroller = useRef<ScrollView>(null);
   /**
@@ -196,21 +209,48 @@ export function MoveStrip({
       </ScrollView>
       {/* The footer is over the canvas, so practise mode costs the panel no
           height at all - the same trick as the stage rail and "only these". */}
-      {practising && step < moves.length && (
+      {practising && awaitingReport && (
+        <View
+          style={styles.reportRow}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Did you know that move?"
+        >
+          <Pressable
+            onPress={() => onReport('knew')}
+            style={[styles.report, styles.reportKnew]}
+            accessibilityRole="button"
+            accessibilityLabel="I knew that move"
+          >
+            <Text style={styles.reportText}>✓ Knew it</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onReport('missed')}
+            style={[styles.report, styles.reportMissed]}
+            accessibilityRole="button"
+            accessibilityLabel="I missed that move"
+          >
+            <Text style={styles.reportText}>✗ Missed it</Text>
+          </Pressable>
+        </View>
+      )}
+      {practising && !awaitingReport && step < moves.length && (
         <Pressable
           onPress={onReveal}
           style={styles.reveal}
           accessibilityRole="button"
           accessibilityLabel={`Reveal move ${step + 1} of ${moves.length}`}
+          accessibilityHint="Recall it first, then say whether you had it"
         >
           <Text style={styles.revealText}>Reveal the next move</Text>
         </Pressable>
       )}
       {/* "Again?" was a question with no affordance: the only way back was the
           transport's Restart, three controls away and named something else. */}
-      {practising && step >= moves.length && (
+      {practising && !awaitingReport && step >= moves.length && (
         <View style={styles.doneRow}>
-          <Text style={styles.done}>Done in {moves.length} moves.</Text>
+          <Text style={styles.done} accessibilityLiveRegion="polite">
+            {summary}
+          </Text>
           <Pressable
             onPress={onAgain}
             style={styles.again}
@@ -225,7 +265,7 @@ export function MoveStrip({
   );
 }
 
-const { surface, line, text, accent, space, type, radius, hit } = tokens;
+const { surface, line, text, accent, status, space, type, radius, hit } = tokens;
 
 const styles = StyleSheet.create({
   // A heads-up display over the cube, so it needs its own ground to read on.
@@ -330,6 +370,25 @@ const styles = StyleSheet.create({
     backgroundColor: accent.soft,
   },
   revealText: { ...type.caption, fontWeight: '700', color: text.primary },
+  // Side by side and full width: one tap, no typing, no second screen. The
+  // answer has to be as cheap as the reveal or nobody gives one.
+  reportRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    marginHorizontal: space.gutter,
+    marginTop: space.xs,
+  },
+  report: {
+    flex: 1,
+    minHeight: hit.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    borderWidth: 2,
+  },
+  reportKnew: { borderColor: status.ok, backgroundColor: status.okSoft },
+  reportMissed: { borderColor: status.warn, backgroundColor: status.warnSoft },
+  reportText: { ...type.caption, fontWeight: '700', color: text.primary },
   doneRow: {
     flexDirection: 'row',
     alignItems: 'center',

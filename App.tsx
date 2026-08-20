@@ -68,6 +68,14 @@ import { SolvePanel } from './src/components/SolvePanel';
 import { StepBar } from './src/components/StepBar';
 import { MoveStrip } from './src/components/MoveStrip';
 import { WhySheet } from './src/components/WhySheet';
+import {
+  PractiseSession,
+  Recall,
+  record as recordRecall,
+  startPractise,
+  summarise,
+} from './src/learn/session';
+import { chunkNameAt } from './src/ui/notation';
 import { TOP_BAR_H, netBlockHeight } from './src/ui/net';
 import { tokens } from './src/ui/theme';
 
@@ -131,6 +139,16 @@ export default function App() {
   /** The step whose "why this works" sheet is open, over the panel. */
   const [explaining, setExplaining] = useState<PlanStep | null>(null);
   const [practising, setPractising] = useState(false);
+  /**
+   * One step's practise attempt. Session-scoped and thrown away when the step
+   * closes: accumulating across steps is the learner model, which is round 5's
+   * work and wants a store this component should not invent.
+   */
+  const [practice, setPractice] = useState<PractiseSession | null>(null);
+  /** A move has been revealed and the learner has not yet said how they did. */
+  const [awaitingReport, setAwaitingReport] = useState(false);
+  /** Which move that was: `playback.index` has moved on by the time they answer. */
+  const revealed = useRef(0);
   const [paintNudge, setPaintNudge] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<SolvePlan | null>(null);
@@ -348,16 +366,31 @@ export default function App() {
     setShortest((prev) => (prev ? relabelMethod(prev, rot, next) : prev));
   }, [playback]);
 
+  /**
+   * A fresh attempt: the same step, from the top, with the previous attempt's
+   * verdicts discarded rather than added to. Two attempts at one step are two
+   * results, and averaging them would flatter the second one.
+   */
+  const restartPractise = useCallback((p: Playback) => {
+    setPractice(startPractise(p.step.id, p.step.moves.length, p.step.algorithmId));
+    setAwaitingReport(false);
+  }, []);
+
   const restoreBase = useCallback(() => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
-    setPlayback((p) => (p ? playbackRestart(p) : p));
-  }, []);
+    setPlayback((p) => {
+      if (p) restartPractise(p);
+      return p ? playbackRestart(p) : p;
+    });
+  }, [restartPractise]);
 
   const startStep = useCallback((st: PlanStep) => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
     setExplaining(null);
+    setPractice(startPractise(st.id, st.moves.length, st.algorithmId));
+    setAwaitingReport(false);
     // `selectStep` reads the origin out of the session when there is one, so a
     // second step picked mid-run is measured from the cube the plan describes -
     // not from wherever the first step left off, which stacked two preludes.
@@ -367,6 +400,8 @@ export default function App() {
   const closeRun = useCallback(() => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
+    setPractice(null);
+    setAwaitingReport(false);
     setPlayback((p) => {
       if (!p) return null;
       const kept = playbackClose(p);
@@ -417,6 +452,41 @@ export default function App() {
     if (playbackAtEnd(playback)) restoreBase();
     setPlaying(true);
   }, [playback, playing, restoreBase]);
+
+  /**
+   * The learner's own verdict on the move they just uncovered, recorded against
+   * the trigger it belongs to rather than the letter - "what does the sexy move
+   * expand to" is the thing being recalled.
+   */
+  const onReport = useCallback(
+    (outcome: Recall) => {
+      const pb = playback;
+      if (!pb) return;
+      const notation = pb.step.moves.map((m) => m.notation);
+      const move = Math.min(revealed.current, notation.length - 1);
+      setPractice((s) =>
+        s ? recordRecall(s, move, outcome, chunkNameAt(notation, move)) : s
+      );
+      setAwaitingReport(false);
+    },
+    [playback]
+  );
+
+  /**
+   * Turning practise on part-way through a step starts the attempt from here:
+   * the moves already watched were not recalled, and counting them as known
+   * would be the app flattering the learner.
+   */
+  const onPractise = useCallback(
+    (on: boolean) => {
+      setPractising(on);
+      setAwaitingReport(false);
+      if (on && playback) {
+        setPractice(startPractise(playback.step.id, playback.step.moves.length, playback.step.algorithmId));
+      }
+    },
+    [playback]
+  );
 
   const onModeChange = useCallback(
     (m: Mode) => {
@@ -568,12 +638,17 @@ export default function App() {
               wireframe={wireframe}
               onWireframe={setWireframe}
               practising={practising}
-              onPractise={setPractising}
+              onPractise={onPractise}
               onReveal={() => {
                 setPlaying(false);
+                revealed.current = playback.index;
+                setAwaitingReport(true);
                 stepForward();
               }}
               onAgain={restoreBase}
+              awaitingReport={awaitingReport}
+              onReport={onReport}
+              summary={summarise(practice, playback.step.moves.length)}
             />
           )}
         </View>

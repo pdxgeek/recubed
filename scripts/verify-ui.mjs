@@ -701,6 +701,57 @@ try {
       transport.every((t) => t.disabled === 'true'),
       JSON.stringify(transport)
     );
+
+    // 7b.5 practise mode asks for an answer, and reports the one it was given.
+    //
+    // Uncovering a move tested nothing: thirteen taps on Reveal and thirteen
+    // correct recalls left the app in exactly the same state, so "how did I
+    // do?" had no honest answer and a learner model would have had nothing to
+    // record but "watched".
+    check(
+      'the verdict is asked for only after a move is revealed',
+      (await count('I knew that move')) === 0
+    );
+    const moves = Number((labels[probe].match(/(\d+) moves/) ?? [])[1] ?? 0);
+    let knew = 0;
+    let missed = 0;
+    let missingRow = -1;
+    for (let i = 0; i < moves; i++) {
+      await page.click('[aria-label^="Reveal move "]');
+      await sleep(650);
+      if ((await count('I knew that move')) !== 1) {
+        missingRow = i;
+        break;
+      }
+      if (i % 4 === 3) {
+        await page.click('[aria-label="I missed that move"]');
+        missed++;
+      } else {
+        await page.click('[aria-label="I knew that move"]');
+        knew++;
+      }
+      await sleep(300);
+    }
+    check(`every one of the ${moves} reveals asked for a verdict`, missingRow === -1,
+      `none offered at move ${missingRow + 1}`);
+    await sleep(500);
+    const scored = await bodyText();
+    check(
+      `the score is the learner's own answers (${knew} knew, ${missed} missed)`,
+      scored.includes(`Done in ${moves} moves · ${knew} knew, ${missed} missed.`),
+      scored.split('\n').filter((l) => /Done in/.test(l)).join(' / ')
+    );
+    check('and Again is a button, not a question mark',
+      (await count(`Practise these ${moves} moves again`)) === 1);
+    await page.click(`[aria-label="Practise these ${moves} moves again"]`);
+    await sleep(900);
+    const restarted = await bodyText();
+    check(
+      'a second attempt starts from an empty score',
+      !/Done in/.test(restarted) && /Reveal the next move/.test(restarted),
+      restarted.split('\n').filter((l) => /Done in|Reveal/.test(l)).join(' / ')
+    );
+
     await page.click('[aria-label="Practise mode: hide the moves ahead"]');
     await sleep(600);
     await page.click('[aria-label^="Keep these moves"]');
