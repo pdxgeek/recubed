@@ -3,6 +3,7 @@ import {
   AccessibilityInfo,
   Animated,
   Platform,
+  Pressable,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -66,6 +67,7 @@ import { PaintPanel } from './src/components/PaintPanel';
 import { SolvePanel } from './src/components/SolvePanel';
 import { StepBar } from './src/components/StepBar';
 import { MoveStrip } from './src/components/MoveStrip';
+import { WhySheet } from './src/components/WhySheet';
 import { tokens } from './src/ui/theme';
 
 /**
@@ -92,6 +94,11 @@ export default function App() {
   const wide = width >= 900 || (width > height && width >= 640);
   /** The sheet may never be taller than the window can spare. */
   const sheetMin = Math.min(360, Math.round(height * 0.42));
+  /**
+   * Short screens give the cube the height instead of the step list: at 667 the
+   * list is one row during a run, which is not worth 180pt of cube.
+   */
+  const short = height < 700;
 
   /**
    * Bumped every time a new scene is built, so the effects below re-apply the
@@ -120,6 +127,9 @@ export default function App() {
   const [speedMs, setSpeedMs] = useState(850);
   const [wireframe, setWireframe] = useState(false);
   const [view, setView] = useState<CubeView>('3d');
+  /** The step whose "why this works" sheet is open, over the panel. */
+  const [explaining, setExplaining] = useState<PlanStep | null>(null);
+  const [practising, setPractising] = useState(false);
   const [paintNudge, setPaintNudge] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<SolvePlan | null>(null);
@@ -138,6 +148,11 @@ export default function App() {
   const stepForSelection = useMemo(() => stepFor(plan, selection), [plan, selection]);
   /** A search result is worth showing only while it still describes this cube. */
   const liveShortest = useMemo(() => currentShortest(shortest, state), [shortest, state]);
+  /** Paintable stickers filled in. The six centres are fixed and never counted. */
+  const painted = useMemo(
+    () => SLOTS.filter((sl) => !isCenter(sl.pos) && state.colors[sl.index] !== null).length,
+    [state]
+  );
 
   /** Pieces the running step is moving, followed as the cube turns. */
   const runTargetSlots = useMemo(() => {
@@ -330,6 +345,7 @@ export default function App() {
   const startStep = useCallback((st: PlanStep) => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
+    setExplaining(null);
     // `selectStep` reads the origin out of the session when there is one, so a
     // second step picked mid-run is measured from the cube the plan describes -
     // not from wherever the first step left off, which stacked two preludes.
@@ -459,8 +475,13 @@ export default function App() {
         onComputeShortest={computeShortest}
         activeStepId={playback?.step.id ?? null}
         running={!!playback}
+        practising={practising}
         onSelectStep={startStep}
-        onGoPaint={() => onModeChange('paint')}
+        onExplain={setExplaining}
+        onGoPaint={(focus) => {
+          if (focus) setPaintColor(focus);
+          onModeChange('paint');
+        }}
         highlightMode={highlightMode}
         onHighlightMode={onHighlightMode}
         showPartner={showPartner}
@@ -489,8 +510,14 @@ export default function App() {
           {/* The GL surface stays mounted while the net is showing: unmounting
               it tears the scene down (as it must on a real unmount), and every
               toggle would then pay for a full rebuild. */}
-          <View style={view === 'net' ? styles.hidden : styles.fill}>
+          <View
+            style={view === 'net' ? styles.hidden : styles.fill}
+            pointerEvents={view === 'net' ? 'none' : 'auto'}
+            accessibilityElementsHidden={view === 'net'}
+            importantForAccessibility={view === 'net' ? 'no-hide-descendants' : 'auto'}
+          >
             <CubeCanvas
+              paused={view === 'net'}
               onReady={onSceneReady}
               onPickSticker={onPickSticker}
               onGestureEnd={anchorToView}
@@ -505,11 +532,7 @@ export default function App() {
               selectedSlots={selectionSlots}
               partnerSlots={partnerSlots}
               movingSlots={runTargetSlots}
-              status={
-                mode === 'paint'
-                  ? `${state.colors.filter((c) => c !== null).length - 6} of 48 painted`
-                  : (selectedName ?? 'Nothing selected')
-              }
+              status={mode === 'paint' ? `${painted} of 48 painted` : (selectedName ?? 'Nothing selected')}
             />
           )}
           {nudgeVisible && !playback && view === '3d' && (
@@ -531,6 +554,12 @@ export default function App() {
               step={step}
               wireframe={wireframe}
               onWireframe={setWireframe}
+              practising={practising}
+              onPractise={setPractising}
+              onReveal={() => {
+                setPlaying(false);
+                stepForward();
+              }}
             />
           )}
         </View>
@@ -542,13 +571,58 @@ export default function App() {
               : [
                   styles.panelBottom,
                   playback
-                    ? { minHeight: Math.min(200, sheetMin), maxHeight: '38%' as const }
+                    ? short
+                      ? { minHeight: 140, maxHeight: 140 }
+                      : { minHeight: Math.min(200, sheetMin), maxHeight: '38%' as const }
                     : { minHeight: sheetMin },
                 ],
           ]}
         >
+          {/* The wide panel had ~700pt of air above and below its content. The
+              net fills it with the one thing that helps: manipulate in 3D on
+              the left, check the whole cube on the right. It also makes the net
+              discoverable to the colour-blind users its letters are for. */}
+          {wide && mode === 'paint' && view === '3d' && (
+            <View style={styles.panelNet}>
+              <CubeNet
+                state={state}
+                mode={mode}
+                paintColor={paintColor ? COLOR_NAME[paintColor] : null}
+                onPickSticker={onPickSticker}
+                selectedSlots={selectionSlots}
+                partnerSlots={partnerSlots}
+                movingSlots={runTargetSlots}
+                status={`${painted} of 48 painted`}
+              />
+            </View>
+          )}
           {panel}
         </View>
+        {explaining && (
+          <>
+            <Pressable
+              style={styles.sheetScrim}
+              onPress={() => setExplaining(null)}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            />
+            <View style={[styles.sheetHolder, { height: Math.min(440, height * 0.62) }]}>
+              <WhySheet
+                step={explaining}
+                state={state}
+                wireframe={wireframe}
+                onWireframe={setWireframe}
+                onWatch={() => {
+                  const st = explaining;
+                  setExplaining(null);
+                  setSpeedMs(1400);
+                  startStep(st);
+                }}
+                onClose={() => setExplaining(null)}
+              />
+            </View>
+          </>
+        )}
       </View>
       {playback && (
         <StepBar
@@ -558,10 +632,14 @@ export default function App() {
           speedMs={speedMs}
           stage={runStage}
           onPrev={stepBack}
-          onNext={() => {
-            setPlaying(false);
-            stepForward();
-          }}
+          onNext={
+            practising
+              ? null
+              : () => {
+                  setPlaying(false);
+                  stepForward();
+                }
+          }
           onPlayPause={onPlayPause}
           onRestart={restoreBase}
           onSpeed={setSpeedMs}
@@ -581,7 +659,10 @@ const styles = StyleSheet.create({
   bodyRow: { flexDirection: 'row' },
   bodyCol: { flexDirection: 'column' },
   fill: { flex: 1 },
-  hidden: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -9999 },
+  // Kept at full size rather than shrunk to a pixel: a 1x1 surface makes the
+  // scene rebuild its projection down and back up, and the frame loop is paused
+  // while hidden so nothing is drawn either way.
+  hidden: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0 },
   canvasWrap: { flex: 1 },
   // Room for the MoveStrip, so the cube is fitted above it rather than drawn
   // behind it. Without this the strip's scrim hides the whole bottom layer -
@@ -598,6 +679,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   panel: { backgroundColor: surface.base },
+  panelNet: { flexShrink: 1, minHeight: 260 },
+  // The sheet covers the body rather than the panel: during a run the panel is
+  // 230pt, which is not enough to explain anything in.
+  sheetScrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: surface.scrim },
+  sheetHolder: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   panelSide: {
     justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,

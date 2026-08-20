@@ -11,6 +11,10 @@ interface Props {
   /** The scoped X-ray control: it lives here because it acts on the canvas. */
   wireframe: boolean;
   onWireframe: (v: boolean) => void;
+  /** Practise mode: the moves ahead are covered and revealed one at a time. */
+  practising: boolean;
+  onPractise: (v: boolean) => void;
+  onReveal: () => void;
 }
 
 /** "R'" reads as "R apostrophe" otherwise. */
@@ -22,7 +26,16 @@ function spoken(notation: string): string {
 }
 
 /** The move sequence, shown under the cube rather than in its own bar. */
-export function MoveStrip({ title, moves, step, wireframe, onWireframe }: Props) {
+export function MoveStrip({
+  title,
+  moves,
+  step,
+  wireframe,
+  onWireframe,
+  practising,
+  onPractise,
+  onReveal,
+}: Props) {
   const scroller = useRef<ScrollView>(null);
   /**
    * Where each chunk starts inside the scroll content, and where each chip
@@ -83,18 +96,26 @@ export function MoveStrip({ title, moves, step, wireframe, onWireframe }: Props)
         {/* Scoped X-ray. In the panel it cost a row of the step list; here it is
             over the canvas it acts on and costs no panel height at all. */}
         <Pressable
+          onPress={() => onPractise(!practising)}
+          style={[styles.only, practising && styles.onlyOn]}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: practising }}
+          aria-checked={practising}
+          accessibilityLabel="Practise mode: hide the moves ahead"
+        >
+          <Text style={[styles.onlyText, practising && styles.onlyTextOn]}>practise</Text>
+        </Pressable>
+        <Pressable
           onPress={() => onWireframe(!wireframe)}
-          style={styles.only}
+          style={[styles.only, wireframe && styles.onlyOn]}
           accessibilityRole="switch"
           accessibilityState={{ checked: wireframe }}
+          aria-checked={wireframe}
           accessibilityLabel="Show only the pieces this step moves"
         >
           <View style={[styles.onlyDot, wireframe && styles.onlyDotOn]} />
           <Text style={[styles.onlyText, wireframe && styles.onlyTextOn]}>only these</Text>
         </Pressable>
-        <Text style={styles.progress}>
-          {done}/{moves.length}
-        </Text>
       </View>
       <View style={styles.track} pointerEvents="none">
         <View style={[styles.fill, { width: `${(done / Math.max(1, moves.length)) * 100}%` }]} />
@@ -133,6 +154,9 @@ export function MoveStrip({ title, moves, step, wireframe, onWireframe }: Props)
                 const i = chunk.start + k;
                 const past = i < step;
                 const current = i === step;
+                // In practise mode the moves you have not reached yet are
+                // covered: the point is to recall `R U R' U'` from its name.
+                const hidden = practising && i >= step;
                 return (
                   <View
                     key={`${m.notation}-${i}`}
@@ -142,17 +166,23 @@ export function MoveStrip({ title, moves, step, wireframe, onWireframe }: Props)
                     onLayout={(e) => {
                       chipX.current[i] = e.nativeEvent.layout.x;
                     }}
-                    style={[styles.chip, past && styles.chipPast, current && styles.chipCurrent]}
+                    style={[
+                      styles.chip,
+                      past && styles.chipPast,
+                      current && !hidden && styles.chipCurrent,
+                      hidden && styles.chipHidden,
+                    ]}
                   >
                     <Text
                       style={[
                         styles.chipText,
                         past && styles.chipTextPast,
-                        current && styles.chipTextCurrent,
+                        current && !hidden && styles.chipTextCurrent,
+                        hidden && styles.chipTextHidden,
                       ]}
                       maxFontSizeMultiplier={1.3}
                     >
-                      {m.notation}
+                      {hidden ? '?' : m.notation}
                     </Text>
                   </View>
                 );
@@ -161,6 +191,21 @@ export function MoveStrip({ title, moves, step, wireframe, onWireframe }: Props)
           </View>
         ))}
       </ScrollView>
+      {/* The footer is over the canvas, so practise mode costs the panel no
+          height at all - the same trick as the stage rail and "only these". */}
+      {practising && step < moves.length && (
+        <Pressable
+          onPress={onReveal}
+          style={styles.reveal}
+          accessibilityRole="button"
+          accessibilityLabel={`Reveal move ${step + 1} of ${moves.length}`}
+        >
+          <Text style={styles.revealText}>Reveal the next move</Text>
+        </Pressable>
+      )}
+      {practising && step >= moves.length && (
+        <Text style={styles.done}>Done in {moves.length} moves. Again?</Text>
+      )}
     </View>
   );
 }
@@ -186,7 +231,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.gutter,
   },
   title: { ...type.caption, fontWeight: '600', color: text.secondary, flex: 1 },
-  progress: { ...type.caption, ...tokens.numeric, color: text.secondary },
   only: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -206,6 +250,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   onlyDotOn: { backgroundColor: accent.base, borderColor: accent.base },
+  onlyOn: { borderColor: accent.base, borderWidth: 2 },
   onlyText: { ...type.overline, color: text.secondary },
   onlyTextOn: { color: text.primary },
   track: {
@@ -249,7 +294,31 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     transform: [{ scale: 1.06 }],
   },
+  chipHidden: {
+    backgroundColor: 'transparent',
+    borderStyle: 'dashed',
+    borderColor: line.outline,
+  },
+  chipTextHidden: { color: text.tertiary },
   chipText: { ...type.monoChip, color: text.secondary },
   chipTextPast: { color: text.primary },
   chipTextCurrent: { color: accent.ink },
+  reveal: {
+    marginHorizontal: space.gutter,
+    marginTop: space.xs,
+    minHeight: hit.min,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: accent.base,
+    backgroundColor: accent.soft,
+  },
+  revealText: { ...type.caption, fontWeight: '700', color: text.primary },
+  done: {
+    ...type.caption,
+    color: text.primary,
+    textAlign: 'center',
+    paddingTop: space.xs,
+  },
 });

@@ -6,6 +6,11 @@ import { RenderLoop, createRenderLoop } from '../render/loop';
 
 export interface CubeCanvasProps {
   style?: ViewStyle;
+  /**
+   * True while the canvas is on screen but not being looked at - the net view
+   * covers it. The context and the scene stay, the drawing stops.
+   */
+  paused?: boolean;
   /** Called once the GL context exists and the scene is ready. */
   onReady: (scene: CubeScene) => void;
   /** Slot index of the sticker tapped, or null when the tap missed the cube. */
@@ -17,9 +22,16 @@ export interface CubeCanvasProps {
 const TAP_SLOP = 10;
 const TAP_MS = 400;
 
-export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: CubeCanvasProps) {
+export function CubeCanvas({
+  style,
+  paused = false,
+  onReady,
+  onPickSticker,
+  onGestureEnd,
+}: CubeCanvasProps) {
   const sceneRef = useRef<CubeScene | null>(null);
   const loopRef = useRef<RenderLoop | null>(null);
+  const pausedRef = useRef(paused);
   const layout = useRef({ width: 1, height: 1 });
   const drag = useRef({ x: 0, y: 0, startX: 0, startY: 0, t: 0, moved: 0 });
 
@@ -58,11 +70,20 @@ export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: Cube
         request: (cb) => globalThis.requestAnimationFrame(cb),
         cancel: (h) => globalThis.cancelAnimationFrame(h),
       });
+      loopRef.current.setPaused(pausedRef.current);
       loopRef.current.start();
       onReady(scene);
     },
     [onReady]
   );
+
+  useEffect(() => {
+    pausedRef.current = paused;
+    loopRef.current?.setPaused(paused);
+    // Coming back into view, re-fit first: the surface may have changed size
+    // while nothing was drawing.
+    if (!paused) loopRef.current?.syncSize();
+  }, [paused]);
 
   const onLayout = useCallback((e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;

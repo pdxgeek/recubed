@@ -36,12 +36,29 @@ export interface RenderLoop {
   stop(): void;
   /** Re-fit now rather than at the next frame, for a layout change. */
   syncSize(): void;
+  /** Stop drawing without tearing anything down, e.g. while hidden. */
+  setPaused(paused: boolean): void;
   readonly running: boolean;
+  readonly paused: boolean;
   readonly frames: number;
 }
 
 /** Longest frame delta the scene is allowed to integrate in one go. */
 const MAX_DT = 64;
+
+/**
+ * The loop currently presenting.
+ *
+ * There is exactly one GL surface in this app, so there should be exactly one
+ * loop. Making that an invariant of the module rather than of the component
+ * means a canvas that fails to tear itself down cannot leave a second loop
+ * drawing forever - which is what a fast refresh used to do. `CubeCanvas` still
+ * stops its loop on unmount; this is the belt that does not depend on it.
+ */
+let presenting: RenderLoop | null = null;
+
+/** The loop currently presenting, for tests and for teardown assertions. */
+export const currentLoop = () => presenting;
 
 export function createRenderLoop(
   gl: FrameSurface,
@@ -50,6 +67,7 @@ export function createRenderLoop(
 ): RenderLoop {
   let handle: number | null = null;
   let alive = false;
+  let paused = false;
   let last = 0;
   let frames = 0;
 
@@ -58,6 +76,8 @@ export function createRenderLoop(
     handle = scheduler.request(frame);
     const dt = last ? now - last : 16;
     last = now;
+    // Hidden behind the net view: keep the context and the scene, draw nothing.
+    if (paused) return;
     // The drawing buffer follows the surface and nothing announces the change,
     // so it is checked every frame. Without this a rotation, a tablet side
     // panel or a split view leaves the cube oversized, off-centre and mis-picked.
@@ -68,9 +88,13 @@ export function createRenderLoop(
     frames++;
   };
 
-  return {
+  const loop: RenderLoop = {
     start() {
       if (alive) return;
+      // Only one loop presents at a time. A previous canvas that never tore
+      // itself down is stopped here rather than left running.
+      if (presenting && presenting !== loop) presenting.stop();
+      presenting = loop;
       alive = true;
       last = 0;
       handle = scheduler.request(frame);
@@ -78,9 +102,13 @@ export function createRenderLoop(
     stop() {
       if (!alive) return;
       alive = false;
+      if (presenting === loop) presenting = null;
       if (handle !== null) scheduler.cancel(handle);
       handle = null;
       scene.dispose();
+    },
+    setPaused(next: boolean) {
+      paused = next;
     },
     syncSize() {
       scene.resizeIfNeeded(gl.drawingBufferWidth, gl.drawingBufferHeight);
@@ -91,7 +119,11 @@ export function createRenderLoop(
     get frames() {
       return frames;
     },
+    get paused() {
+      return paused;
+    },
   };
+  return loop;
 }
 
 /** Narrowing helper so `CubeScene` satisfies `Frameable` at the call site. */

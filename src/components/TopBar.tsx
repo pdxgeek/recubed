@@ -16,7 +16,7 @@ interface Props {
   onResetView: () => void;
 }
 
-const VIEW_LABEL: Record<CubeView, string> = { '3d': '3D', net: 'Net' };
+const VIEW_LABEL: Record<CubeView, string> = { '3d': '3D', net: 'Flat' };
 const VIEW_HINT: Record<CubeView, string> = {
   '3d': '3D cube view',
   net: 'Flat net view',
@@ -42,6 +42,7 @@ export function TopBar({ mode, onMode, view, onView, wireframe, onWireframe, onR
               accessibilityRole="tab"
               accessibilityLabel={HINT[m]}
               accessibilityState={{ selected: on }}
+              aria-selected={on}
             >
               <Text style={[styles.segText, on && styles.segTextOn]} maxFontSizeMultiplier={1.4}>
                 {LABEL[m]}
@@ -63,6 +64,7 @@ export function TopBar({ mode, onMode, view, onView, wireframe, onWireframe, onR
                 accessibilityRole="tab"
                 accessibilityLabel={VIEW_HINT[v]}
                 accessibilityState={{ selected: on }}
+                aria-selected={on}
               >
                 <Text
                   style={[styles.btnText, on && styles.btnTextOn]}
@@ -83,6 +85,7 @@ export function TopBar({ mode, onMode, view, onView, wireframe, onWireframe, onR
             accessibilityRole="switch"
             accessibilityLabel="X-ray view"
             accessibilityState={{ checked: wireframe }}
+            aria-checked={wireframe}
             accessibilityHint="Hides the solved stickers so you can watch the pieces that matter"
           >
             <View style={[styles.dot, wireframe && styles.dotOn]} />

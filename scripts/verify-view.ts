@@ -2,71 +2,38 @@
  * Checks the view model: turning about the screen's axes with roll levelled out
  * must keep the cube square at every angle, must never seize up, and
  * re-anchoring must leave the picture exactly where it was.
+ *
+ * This drives `src/render/view.ts` - the maths the renderer actually runs. It
+ * used to re-implement all of it, so the test and the shipping code were free
+ * to drift; that was the last mirror test in the suite.
  */
 import { Quaternion, Vector3, Matrix4 } from 'three';
 import { FACES, FACE_NORMAL, Face } from '../src/cube/core';
 import { rotationBringing, CubeRotation } from '../src/cube/orientation';
+import {
+  CHANGEOVER,
+  GLIDE_MAX,
+  applySpin,
+  glide,
+  levelRoll,
+  nearestUpAxis,
+  restingOrientation,
+  rollAngle,
+  tiltEase,
+} from '../src/render/view';
 
 let fails = 0;
 const check = (name: string, ok: boolean, extra = '') => {
   if (!ok) { fails++; console.log(`FAIL  ${name} ${extra}`); }
 };
 
-const AXES = [
-  new Vector3(1, 0, 0), new Vector3(-1, 0, 0),
-  new Vector3(0, 1, 0), new Vector3(0, -1, 0),
-  new Vector3(0, 0, 1), new Vector3(0, 0, -1),
-];
-
-const nearestUp = (q: Quaternion) => {
-  let best = new Vector3();
-  let bestY = -Infinity;
-  for (const a of AXES) {
-    const v = a.clone().applyQuaternion(q);
-    if (v.y > bestY) { bestY = v.y; best = v; }
-  }
-  return best;
-};
-
-const rollOf = (q: Quaternion) => {
-  let best = 0;
-  let found = false;
-  for (const a of AXES) {
-    const v = a.clone().applyQuaternion(q);
-    if (Math.hypot(v.x, v.y) < 0.5) continue;
-    const roll = Math.atan2(v.x, v.y);
-    if (!found || Math.abs(roll) < Math.abs(best)) { best = roll; found = true; }
-  }
-  return Math.abs(best);
-};
-
-const levelRoll = (q: Quaternion) => {
-  let best = 0;
-  let found = false;
-  for (const a of AXES) {
-    const v = a.clone().applyQuaternion(q);
-    if (Math.hypot(v.x, v.y) < 0.5) continue;
-    const roll = Math.atan2(v.x, v.y);
-    if (!found || Math.abs(roll) < Math.abs(best)) { best = roll; found = true; }
-  }
-  if (Math.abs(best) < 1e-9) return q;
-  return q.premultiply(new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), best));
-};
-
-const turn = (q: Quaternion, pitch: number, yaw: number) => {
-  const d = new Quaternion()
-    .setFromAxisAngle(new Vector3(1, 0, 0), pitch)
-    .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), yaw));
-  return levelRoll(q.premultiply(d));
-};
-
+const nearestUp = (q: Quaternion) => nearestUpAxis(q, new Vector3());
+const rollOf = (q: Quaternion) => Math.abs(rollAngle(q));
+const turn = (q: Quaternion, pitch: number, yaw: number) => applySpin(q, pitch, yaw);
 
 // A long, messy sequence of drags must never leave the cube rolled.
 {
-  let q = new Quaternion()
-    .setFromAxisAngle(new Vector3(1, 0, 0), 0.42)
-    .multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), -0.62));
-  q = levelRoll(q);
+  let q = restingOrientation(new Quaternion());
   let worst = 0;
   let seed = 99;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5);
@@ -158,6 +125,36 @@ console.log('ok    a sideways drag turns about the vertical from every angle');
     check('re-anchoring leaves the cube square', rollOf(after.clone()) < 1e-6, `roll ${(rollOf(after.clone()) * 180 / Math.PI).toFixed(4)} deg, before ${(rollOf(q.clone()) * 180 / Math.PI).toFixed(4)} deg`);
   }
   console.log(`ok    ${checked} re-anchors left the picture untouched`);
+}
+
+// --- the parts of the view model no assertion reached before ----------------
+{
+  // The resting orientation is square, and shows three faces rather than one.
+  const rest = restingOrientation(new Quaternion());
+  check('the cube rests square to the screen', rollOf(rest) < 1e-6);
+  const seen = FACES.filter(
+    (f) => new Vector3(...FACE_NORMAL[f]).applyQuaternion(rest).z > 0.15
+  );
+  check('and rests showing three faces', seen.length === 3, seen.join(''));
+
+  // The catch at the changeover: tilting is eased just where the top face is
+  // about to swap, and nowhere else. That is what stops a casual drag from
+  // re-orienting the cube by accident.
+  const atTilt = (tilt: number) =>
+    tiltEase(levelRoll(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), tilt)));
+  const flat = atTilt(0);
+  const changeover = atTilt(CHANGEOVER);
+  check('there is no drag when a face is squarely on top', Math.abs(flat - 1) < 1e-9, `${flat}`);
+  check('and a real one at the changeover', changeover < flat * 0.7, `${changeover.toFixed(3)}`);
+  let worstEase = 1;
+  for (let t = 0; t <= Math.PI / 2; t += 0.01) worstEase = Math.min(worstEase, atTilt(t));
+  check('but the controls never seize up', worstEase > 0.2, `worst ease ${worstEase.toFixed(3)}`);
+
+  // Glide carries the last of a drag on, and can never fling.
+  check('glide follows the drag', glide(0.02) > 0 && glide(-0.02) < 0);
+  check('glide is capped in both directions',
+    glide(99) === GLIDE_MAX && glide(-99) === -GLIDE_MAX);
+  check('glide is a share, not the whole drag', Math.abs(glide(0.02)) < 0.02);
 }
 
 console.log(fails === 0 ? '\nVIEW MODEL OK' : `\n${fails} FAILURES`);

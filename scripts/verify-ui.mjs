@@ -259,7 +259,7 @@ try {
   // -- 4. the flat net view -------------------------------------------------
   {
     await page.click('[aria-label="Flat net view"]');
-    await sleep(1200);
+    await sleep(1400);
     const net = await page.evaluate(() => {
       const cells = [...document.querySelectorAll('[role="button"]')].filter((n) =>
         / face, (row|centre)/.test(n.getAttribute('aria-label') ?? '')
@@ -269,10 +269,46 @@ try {
         disabled: cells.filter((n) => n.getAttribute('aria-disabled') === 'true').length,
         firstSix: cells.slice(0, 6).map((n) => n.getAttribute('aria-label')),
         labels: cells.map((n) => n.getAttribute('aria-label')),
-        under: cells.filter((n) => n.getBoundingClientRect().height < 34).length,
+        under: cells.filter((n) => n.getBoundingClientRect().height < 44).length,
+        // Every cell's own rect, so visibility and pitch are measurable rather
+        // than inferred - the round-2 net carried its 44pt target in hitSlop,
+        // which no assertion can see.
+        rects: cells.map((n) => {
+          const r = n.getBoundingClientRect();
+          return { x: r.left, y: r.top, w: r.width, h: r.height };
+        }),
+        scroller: (() => {
+          const first = cells[0];
+          let el = first?.parentElement;
+          while (el && el.scrollWidth <= el.clientWidth) el = el.parentElement;
+          return el ? { scrollW: el.scrollWidth, clientW: el.clientWidth } : null;
+        })(),
+        band: (() => {
+          const first = cells[0];
+          const scroller = first?.closest('div[style*="overflow"]');
+          const r = (scroller ?? document.body).getBoundingClientRect();
+          return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
+        })(),
       };
     });
     check('the net renders all 54 stickers', net.total === 54, `${net.total}`);
+    check('every net cell is a real 44pt target',
+      net.rects.every((r) => r.w >= 40 && r.h >= 40), `smallest ${Math.min(...net.rects.map((r) => r.w))}`);
+    // A 44pt pitch means neighbouring targets never overlap. The round-2 net
+    // was 34 on a 37pt pitch with 5pt of slop each side: a 7pt band of every
+    // gutter painted the wrong sticker.
+    const xs = [...new Set(net.rects.map((r) => Math.round(r.x)))].sort((a, b) => a - b);
+    const gaps = xs.slice(1).map((x, i) => x - xs[i]).filter((g) => g < 60);
+    check('and neighbouring targets never overlap',
+      gaps.every((g) => g >= 44), `smallest pitch ${Math.min(...gaps)}`);
+    check('the net never scrolls sideways',
+      !net.scroller, JSON.stringify(net.scroller));
+    // The property the two-up layout buys and the cross cannot: no face is
+    // ever split across the horizontal axis, so a face is either on screen or
+    // one natural vertical swipe away. On the cross, BACK never fits a phone.
+    const offSide = net.rects.filter((r) => r.x < 0 || r.x + r.w > 390).length;
+    check('no sticker is cut off the side of the screen',
+      offSide === 0, `${offSide} of 54 cells off-screen horizontally`);
     check('the six centres are not pressable', net.disabled === 6, `${net.disabled}`);
     check(
       'focus order starts at the Up face',
@@ -475,6 +511,43 @@ try {
       `${a11y.label} of ${a11y.total}`);
     check(`${where}: nothing outside the net is under 44pt`, a11y.small === 0,
       `${a11y.small} too small`);
+  }
+
+  // -- 11. selected/checked state reaches the accessibility tree -------------
+  //
+  // react-native-web drops `accessibilityState` entirely, so for three rounds
+  // every control announced as if unselected: which mode, which view, which
+  // colour, whether X-ray was on. `aria-disabled` did serialise, which is what
+  // hid it.
+  {
+    await page.click('[aria-label="3D cube view"]');
+    await sleep(800);
+    await page.click('[aria-label="Paint the cube"]');
+    await sleep(1200);
+    const state = await page.evaluate(() => {
+      const grab = (sel) =>
+        [...document.querySelectorAll(sel)].map((n) => ({
+          label: n.getAttribute('aria-label'),
+          selected: n.getAttribute('aria-selected'),
+          checked: n.getAttribute('aria-checked'),
+        }));
+      return { tabs: grab('[role="tab"]'), radios: grab('[role="radio"]'), switches: grab('[role="switch"]') };
+    });
+    const selectedTabs = state.tabs.filter((t) => t.selected === 'true');
+    check('every tab reports whether it is selected',
+      state.tabs.length >= 4 && state.tabs.every((t) => t.selected === 'true' || t.selected === 'false'),
+      JSON.stringify(state.tabs));
+    check('exactly one tab per tablist is selected',
+      selectedTabs.length === 2, `${selectedTabs.length} selected: ${selectedTabs.map((t) => t.label).join(', ')}`);
+    check('every colour reports whether it is armed',
+      state.radios.length >= 7 && state.radios.every((r) => r.checked === 'true' || r.checked === 'false'),
+      JSON.stringify(state.radios.slice(0, 3)));
+    check('exactly one colour is armed',
+      state.radios.filter((r) => r.checked === 'true').length === 1,
+      state.radios.filter((r) => r.checked === 'true').map((r) => r.label).join(', '));
+    check('every switch reports whether it is on',
+      state.switches.length >= 1 && state.switches.every((w) => w.checked === 'true' || w.checked === 'false'),
+      JSON.stringify(state.switches));
   }
 
   check('the app never threw', errors.length === 0, errors.join(' | '));

@@ -1,63 +1,40 @@
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import {
-  COLOR_HEX,
-  COLOR_NAME,
-  CubeState,
-  FACES,
-  Face,
-  SLOTS,
-  isCenter,
-} from '../cube/core';
+import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { COLOR_HEX, COLOR_NAME, CubeState, Face, SLOTS, isCenter } from '../cube/core';
 import { Mode } from './TopBar';
+import {
+  CELL,
+  CELL_GAP,
+  FACE_GAP,
+  FACE_SIZE,
+  FACE_WORD,
+  LABEL_H,
+  NET_ROWS,
+  NetLayout,
+  layoutFor,
+  slotIndex,
+} from '../ui/net';
 import { inkOn, tokens } from '../ui/theme';
 
 /**
- * The cube unfolded, as every printed guide draws it.
+ * The cube unfolded.
  *
- * Two jobs, and it is worth being clear that the second is not a consolation
- * prize for the first:
+ * Two jobs, and the second is not a consolation prize for the first:
  *
  *  1. It is the only accessible representation of the cube. The 3D view is a
  *     `PanResponder` over a GL surface: a screen-reader user cannot paint a
  *     sticker or select a piece through it at all. Here every sticker is a
- *     labelled button.
+ *     labelled 44pt button.
  *  2. Every sticker carries its colour's letter, so a colour-blind user can
  *     check what they painted - and the net is how a learner is taught to read
- *     a cube on paper, so it teaches the mapping between the object and the
- *     notation.
+ *     a cube on paper.
  *
  * It renders from the same state and the same highlight sets as the 3D view and
  * calls the same `onPickSticker`. Two views of one state, never two states.
+ *
+ * The geometry lives in `src/ui/net.ts`, which imports no react-native, so the
+ * mapping from a cell to a sticker can be asserted by `verify-net.ts`.
  */
-
-/** `SLOTS` is face-major: face index × 9, then row × 3, then column. */
-export const slotIndex = (face: Face, row: number, col: number) =>
-  FACES.indexOf(face) * 9 + row * 3 + col;
-
-const FACE_WORD: Record<Face, string> = {
-  U: 'Up',
-  R: 'Right',
-  F: 'Front',
-  D: 'Down',
-  L: 'Left',
-  B: 'Back',
-};
-
-/**
- * Reading order of the unfolded cross, which is also the focus order. Not
- * `SLOTS` order: a screen-reader user should walk the net the way it is drawn.
- */
-const ROWS: Face[][] = [['U'], ['L', 'F', 'R', 'B'], ['D']];
-export const FOCUS_ORDER: Face[] = ['U', 'L', 'F', 'R', 'B', 'D'];
-
-const CELL = 34;
-const CELL_GAP = 3;
-const FACE_SIZE = CELL * 3 + CELL_GAP * 2; // 108
-const FACE_GAP = 10;
-const LABEL_H = 14;
-export const NET_W = FACE_SIZE * 4 + FACE_GAP * 3; // 462
-export const NET_H = (FACE_SIZE + LABEL_H) * 3 + FACE_GAP * 2; // 386
 
 interface Props {
   state: CubeState;
@@ -82,6 +59,13 @@ export function CubeNet({
   movingSlots,
   status,
 }: Props) {
+  // Chosen by measured width, not by device class: the cross is four faces
+  // across and does not fit a phone at an honest 44pt pitch.
+  const [layout, setLayout] = React.useState<NetLayout>('pairs');
+  const onLayout = React.useCallback((e: LayoutChangeEvent) => {
+    setLayout(layoutFor(e.nativeEvent.layout.width));
+  }, []);
+
   const selected = new Set(selectedSlots);
   const partner = new Set(partnerSlots);
   const moving = new Set(movingSlots);
@@ -113,12 +97,15 @@ export function CubeNet({
         key={slot}
         onPress={() => onPickSticker(slot)}
         disabled={centre}
-        // 34pt cells with 5pt of slop are 44pt targets. A literal 44pt grid is
-        // 594pt wide and stops being a readable net, so the slop carries it -
-        // the 3pt gutter means neighbouring slop regions meet, never overlap.
-        hitSlop={{ top: 5, bottom: 5, left: 5, right: 5 }}
+        // The 4pt gutter is inside the 44pt pitch, so a couple of points of
+        // slop only softens the rounded corners. It is never load-bearing:
+        // a target has to be carried by the pitch, or neighbouring targets
+        // overlap and a tap paints the wrong sticker.
+        hitSlop={{ top: 2, bottom: 2, left: 2, right: 2 }}
         accessibilityRole="button"
         accessibilityState={{ selected: selected.has(slot), disabled: centre }}
+        aria-selected={selected.has(slot)}
+        aria-disabled={centre}
         accessibilityLabel={`${where} ${what}${role}`}
         accessibilityHint={
           centre
@@ -157,28 +144,23 @@ export function CubeNet({
   );
 
   return (
-    <View style={styles.wrap}>
-      {/* Two scrollers, one per axis: the net is 462 × 386 and the canvas area
-          is smaller than that in both directions on a phone. Scaling it down
-          instead would put the cells under the 34pt the hit slop is sized for. */}
+    <View style={styles.wrap} onLayout={onLayout}>
+      {/* Vertical only. The two-up layout is 268pt wide, narrower than any
+          phone, so no face is ever split across the horizontal axis and there
+          is no sideways scroll to discover. */}
       <ScrollView contentContainerStyle={styles.vertical}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator
-          contentContainerStyle={styles.scroll}
-        >
-        {/* RN's AccessibilityRole union has no "grid"; "list" is the closest
-            role it does carry and reads sensibly for a set of 54 cells. */}
         <View accessibilityRole="list" accessibilityLabel="Cube net, 54 stickers">
-          {ROWS.map((row, i) => (
+          {NET_ROWS[layout].map((row, i) => (
             <View key={i} style={styles.netRow}>
-              {i !== 1 && <View style={styles.spacer} />}
-              {row.map(faceBlock)}
+              {row.map((face, j) =>
+                face ? faceBlock(face) : <View key={`gap${j}`} style={styles.spacer} />
+              )}
             </View>
           ))}
-          </View>
-        </ScrollView>
+        </View>
       </ScrollView>
+      {/* An announcement, not a caption: the panel below already prints the
+          same words. */}
       <Text style={styles.status} accessibilityLiveRegion="polite">
         {status}
       </Text>
@@ -190,8 +172,7 @@ const { surface, line, text, cube, space, type, radius } = tokens;
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
-  vertical: { flexGrow: 1, justifyContent: 'center' },
-  scroll: { padding: space.gutter, alignItems: 'center' },
+  vertical: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: space.md },
   netRow: { flexDirection: 'row', gap: FACE_GAP, marginBottom: FACE_GAP },
   spacer: { width: FACE_SIZE },
   face: { width: FACE_SIZE, gap: CELL_GAP },
@@ -217,10 +198,7 @@ const styles = StyleSheet.create({
   partner: { borderWidth: 3, borderColor: cube.target },
   moving: { borderWidth: 3, borderColor: cube.moving },
   letter: { ...type.overline, textAlign: 'center' },
-  status: {
-    ...type.caption,
-    color: text.tertiary,
-    textAlign: 'center',
-    paddingBottom: space.sm,
-  },
+  // Visually hidden: it is announced, not printed. The paint panel's progress
+  // line and the selection card already say the same thing on screen.
+  status: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 },
 });

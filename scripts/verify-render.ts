@@ -25,7 +25,7 @@ import {
   vecKey,
 } from '../src/cube/core';
 import { CubeScene, SCENE_COLORS } from '../src/render/CubeScene';
-import { createRenderLoop } from '../src/render/loop';
+import { createRenderLoop, currentLoop } from '../src/render/loop';
 import { DrawCall, colorHex, createFakeGL, modelKey } from './fakegl';
 
 let fails = 0;
@@ -304,6 +304,7 @@ pickRoundTrip('after a landscape resize');
   loop.stop();
   check('stopping twice disposes once', seen.disposed === 1);
   check('a stopped loop says so', loop.running === false);
+  check('and gives up the presenting slot', currentLoop() === null);
 
   // Cancelling is not the only defence, and must not be the only one: a frame
   // can already be in flight when the canvas goes away. The loop has to refuse
@@ -321,16 +322,20 @@ pickRoundTrip('after a landscape resize');
     },
   };
   const marks = { renders: 0, disposed: 0 };
-  const zombie = createRenderLoop(surface, {
-    resizeIfNeeded: () => false,
-    update: () => {},
-    render: () => {
-      marks.renders++;
+  const zombie = createRenderLoop(
+    surface,
+    {
+      resizeIfNeeded: () => false,
+      update: () => {},
+      render: () => {
+        marks.renders++;
+      },
+      dispose: () => {
+        marks.disposed++;
+      },
     },
-    dispose: () => {
-      marks.disposed++;
-    },
-  }, deaf);
+    deaf
+  );
   zombie.start();
   stubborn.queued?.(0);
   check('the loop runs while it is alive', marks.renders === 1, `${marks.renders}`);
@@ -341,6 +346,63 @@ pickRoundTrip('after a landscape resize');
     marks.renders === 1, `${marks.renders - 1} zombie frames`);
   check('and does not queue another one',
     stubborn.requests === requestsAtStop, `${stubborn.requests - requestsAtStop} re-queued`);
+}
+
+// -- 6b. one loop presents at a time, and a hidden one draws nothing ----------
+//
+// M6c: `CubeCanvas` calling `stop()` on unmount is a single line that no
+// headless test can execute. So the invariant does not depend on it - starting a
+// loop stops whichever one was presenting, which is the harm that line prevents.
+{
+  const fake = (marks: { renders: number; disposed: number }) => ({
+    resizeIfNeeded: () => false,
+    update: () => {},
+    render: () => {
+      marks.renders++;
+    },
+    dispose: () => {
+      marks.disposed++;
+    },
+  });
+  const surface = {
+    drawingBufferWidth: 100,
+    drawingBufferHeight: 100,
+    endFrameEXP() {},
+  };
+  const ticks: ((now: number) => void)[] = [];
+  const sched = () => ({
+    request: (cb: (now: number) => void) => ticks.push(cb),
+    cancel: () => {},
+  });
+
+  const a = { renders: 0, disposed: 0 };
+  const b = { renders: 0, disposed: 0 };
+  const first = createRenderLoop(surface, fake(a), sched());
+  first.start();
+  check('the loop that started is the one presenting', currentLoop() === first);
+
+  const second = createRenderLoop(surface, fake(b), sched());
+  second.start();
+  check('starting a second loop stops the first', first.running === false);
+  check('and disposes its scene, even though nobody told it to', a.disposed === 1);
+  check('the second is now the one presenting', currentLoop() === second);
+
+  // Pausing keeps the context and the scene but stops the drawing: the GL
+  // surface stays mounted behind the net view, and a 1-pixel cube redrawn sixty
+  // times a second is pure battery.
+  const tick = ticks[ticks.length - 1];
+  tick(0);
+  check('an unpaused loop draws', b.renders === 1, `${b.renders}`);
+  second.setPaused(true);
+  ticks[ticks.length - 1](16);
+  ticks[ticks.length - 1](32);
+  check('a paused loop draws nothing', b.renders === 1, `${b.renders}`);
+  check('but is still running, so it can resume', second.running && second.paused);
+  second.setPaused(false);
+  ticks[ticks.length - 1](48);
+  check('and resumes where it left off', b.renders === 2, `${b.renders}`);
+  second.stop();
+  check('nothing is presenting once it stops', currentLoop() === null);
 }
 
 // -- 7. the harness itself can tell a broken renderer from a working one ------

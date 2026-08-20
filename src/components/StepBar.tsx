@@ -20,7 +20,8 @@ interface Props {
    */
   stage?: StageProgress | null;
   onPrev: () => void;
-  onNext: () => void;
+  /** Null while practising: the moves ahead are covered, so Next would spoil it. */
+  onNext: (() => void) | null;
   onPlayPause: () => void;
   onRestart: () => void;
   onSpeed: (ms: number) => void;
@@ -90,6 +91,7 @@ export function StepBar({
           accessibilityRole="button"
           accessibilityLabel="Previous move"
           accessibilityState={{ disabled: atStart }}
+          aria-disabled={atStart}
         >
           <Text style={styles.iconText}>{'‹'}</Text>
         </Pressable>
@@ -104,12 +106,13 @@ export function StepBar({
         </Pressable>
 
         <Pressable
-          onPress={onNext}
-          disabled={atEnd}
-          style={[styles.icon, atEnd && styles.iconOff]}
+          onPress={onNext ?? undefined}
+          disabled={atEnd || !onNext}
+          style={[styles.icon, (atEnd || !onNext) && styles.iconOff]}
           accessibilityRole="button"
           accessibilityLabel="Next move"
-          accessibilityState={{ disabled: atEnd }}
+          accessibilityState={{ disabled: atEnd || !onNext }}
+          aria-disabled={atEnd || !onNext}
         >
           <Text style={styles.iconText}>{'›'}</Text>
         </Pressable>
@@ -127,6 +130,7 @@ export function StepBar({
                 style={[styles.speedItem, on && styles.speedItemOn]}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: on }}
+                aria-checked={on}
                 accessibilityLabel={`${s.label} playback`}
               >
                 <Text

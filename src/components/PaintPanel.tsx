@@ -65,6 +65,7 @@ export function PaintPanel({
           style={[styles.erase, active === null && styles.eraseOn]}
           accessibilityRole="radio"
           accessibilityState={{ selected: active === null }}
+          aria-checked={active === null}
           accessibilityLabel={`Erase, ${blank} stickers blank`}
         >
           <View style={styles.eraseDot} />
@@ -91,7 +92,9 @@ export function PaintPanel({
         <Text style={[styles.progressText, complete && styles.progressDone]}>
           {complete
             ? `All ${PAINTABLE.length} painted — ready to solve`
-            : `${painted} of ${PAINTABLE.length} painted`}
+            : painted === 0
+              ? `0 of ${PAINTABLE.length} painted · or tap Scramble to practise on a random cube`
+              : `${painted} of ${PAINTABLE.length} painted`}
         </Text>
       </View>
 
@@ -107,6 +110,7 @@ export function PaintPanel({
               style={[styles.tile, on && styles.tileOn, tooMany && styles.tileBad]}
               accessibilityRole="radio"
               accessibilityState={{ selected: on }}
+              aria-checked={on}
               accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
               accessibilityHint="Then tap stickers on the cube"
             >

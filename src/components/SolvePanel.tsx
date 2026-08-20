@@ -1,8 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { COLOR_IDS, COLOR_NAME, ColorId } from '../cube/core';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
-import { chunkByTriggers } from '../cube/algorithms';
 import { HighlightMode, PiecePair } from '../cube/pieces';
+import { Notation } from './Notation';
 import { tokens } from '../ui/theme';
 
 interface Props {
@@ -13,8 +14,13 @@ interface Props {
   activeStepId: string | null;
   /** True while a step is being played, when the panel gets out of the way. */
   running: boolean;
+  /** True while the moves are covered, so the card must not give them away. */
+  practising: boolean;
   onSelectStep: (step: PlanStep) => void;
-  onGoPaint: () => void;
+  /** Opens the "why this works" sheet over the panel. */
+  onExplain: (step: PlanStep) => void;
+  /** `focus` is the colour the error blames, armed on the way back. */
+  onGoPaint: (focus?: ColorId) => void;
   highlightMode: HighlightMode;
   onHighlightMode: (m: HighlightMode) => void;
   showPartner: boolean;
@@ -31,23 +37,6 @@ const MODE_LABEL: Record<HighlightMode, string> = {
   piece: 'Where does it go?',
   location: 'What goes here?',
 };
-
-/**
- * A long step written out is a wall of letters: twenty-five moves wrap to three
- * lines and say nothing. Collapsed rows show what the step is made of instead -
- * the same chunking the move strip uses - and the row that is actually running
- * shows the moves in full.
- */
-function chunkSummary(notation: string): string {
-  const chunks = chunkByTriggers(notation.split(' ').filter(Boolean));
-  return chunks
-    .map((c) =>
-      c.label
-        ? `${c.label}${c.repeat > 1 ? ` ×${c.repeat}` : ''}`
-        : notation.split(' ').slice(c.start, c.start + c.length).join(' ')
-    )
-    .join(' · ');
-}
 
 /** A labelled dot, so the highlight colours are named rather than described. */
 function LegendRow({ color, label }: { color: string; label: string }) {
@@ -66,7 +55,9 @@ export function SolvePanel({
   onComputeShortest,
   activeStepId,
   running,
+  practising,
   onSelectStep,
+  onExplain,
   onGoPaint,
   highlightMode,
   onHighlightMode,
@@ -89,17 +80,26 @@ export function SolvePanel({
   }, [activeStepId]);
 
   if (!plan.ok) {
+    // The message already names the colour at fault; arm it so the user lands
+    // on the paint panel ready to fix it rather than hunting for it.
+    const blamed = COLOR_IDS.find((c) =>
+      (plan.error ?? '').toLowerCase().includes(COLOR_NAME[c].toLowerCase())
+    );
     return (
       <View style={styles.wrap}>
         <Text style={styles.title}>That cube can’t exist</Text>
         <Text style={styles.problem}>{plan.error}</Text>
         <Pressable
-          onPress={onGoPaint}
+          onPress={() => onGoPaint(blamed)}
           style={styles.primary}
           accessibilityRole="button"
-          accessibilityLabel="Back to the colours"
+          accessibilityLabel={
+            blamed ? `Back to the colours with ${COLOR_NAME[blamed]} ready` : 'Back to the colours'
+          }
         >
-          <Text style={styles.primaryText}>Back to the colours</Text>
+          <Text style={styles.primaryText}>
+            {blamed ? `Fix the ${COLOR_NAME[blamed].toLowerCase()} stickers` : 'Back to the colours'}
+          </Text>
         </Pressable>
       </View>
     );
@@ -113,7 +113,7 @@ export function SolvePanel({
           Nothing left to do. Paint in a scramble and the ways to solve it show up here.
         </Text>
         <Pressable
-          onPress={onGoPaint}
+          onPress={() => onGoPaint()}
           style={styles.primary}
           accessibilityRole="button"
           accessibilityLabel="Set the colours"
@@ -162,6 +162,7 @@ export function SolvePanel({
             style={styles.legendSwitch}
             accessibilityRole="switch"
             accessibilityState={{ checked: showPartner }}
+            aria-checked={showPartner}
             accessibilityLabel="Show where it goes"
           >
             <View
@@ -185,6 +186,7 @@ export function SolvePanel({
         accessibilityRole="button"
         accessibilityLabel="Show me how to get it there"
         accessibilityState={{ disabled: !stepForSelection }}
+        aria-disabled={!stepForSelection}
         accessibilityHint={
           stepForSelection ? undefined : 'No step for this one yet — it settles as the layers go in'
         }
@@ -242,6 +244,8 @@ export function SolvePanel({
                   method.failed ? 'Try the search again' : 'Work out the shortest solve'
                 }
                 accessibilityState={{ disabled: computing, busy: computing }}
+                aria-disabled={computing}
+                aria-busy={computing}
               >
                 {computing ? (
                   <View style={styles.busyRow}>
@@ -272,6 +276,7 @@ export function SolvePanel({
                     style={[styles.step, on && styles.stepOn]}
                     accessibilityRole="button"
                     accessibilityState={{ selected: on }}
+                    aria-selected={on}
                     accessibilityLabel={`${step.title}, ${step.moves.length} moves${
                       step.algorithm ? `, ${step.algorithm}` : ''
                     }`}
@@ -279,29 +284,49 @@ export function SolvePanel({
                     <View style={[styles.rail, on && styles.railOn]} />
                     <View style={styles.stepBody}>
                       <View style={styles.stepHead}>
+                        {/* While this step is running the move strip carries the
+                            title 400pt above; printing it again cost a third of
+                            the list for nothing. */}
                         <Text style={[styles.stepTitle, on && styles.stepTitleOn]} numberOfLines={1}>
-                          {on ? '▸ ' : ''}
-                          {step.title}
+                          {on ? '▸ Running' : step.title}
                         </Text>
                         <Text style={styles.stepCount}>{step.moves.length}</Text>
                         <Text style={styles.chevron}>›</Text>
                       </View>
                       <View style={styles.stepMeta}>
-                        <Text
-                          style={[styles.notation, !on && styles.notationSummary]}
-                          numberOfLines={on ? undefined : 1}
-                        >
-                          {on || step.moves.length <= 8
-                            ? step.notation
-                            : chunkSummary(step.notation)}
-                        </Text>
+                        {!on && (
+                          <Notation
+                            moves={step.moves}
+                            variant="summary"
+                            numberOfLines={1}
+                            style={styles.notationFlex}
+                          />
+                        )}
                         {step.algorithm && step.algorithm !== step.title && (
                           <Text style={styles.tag} numberOfLines={1}>
                             {step.algorithm}
                           </Text>
                         )}
                       </View>
-                      {on && <Text style={styles.stepDetail}>{step.detail}</Text>}
+                      {on && (
+                        <>
+                          {/* Practise mode covers the moves in the strip; the
+                              card must not print the answer underneath it. */}
+                          {!practising && (
+                            <Notation moves={step.moves} variant="blocks" rawBelow={4} />
+                          )}
+                          {/* The paragraph lives in the sheet now. A five-line
+                              prose block here left one card in the viewport. */}
+                          <Pressable
+                            onPress={() => onExplain(step)}
+                            style={styles.why}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
+                          >
+                            <Text style={styles.whyText}>Why this works ›</Text>
+                          </Pressable>
+                        </>
+                      )}
                     </View>
                   </Pressable>
                 </View>
@@ -326,6 +351,7 @@ export function SolvePanel({
                 style={[styles.mode, on && styles.modeOn]}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: on }}
+                aria-checked={on}
                 accessibilityLabel={MODE_LABEL[m]}
               >
                 <Text style={[styles.modeText, on && styles.modeTextOn]} numberOfLines={1}>
@@ -442,9 +468,10 @@ const styles = StyleSheet.create({
   stepCount: { ...type.caption, ...tokens.numeric, color: text.tertiary },
   chevron: { ...type.heading, color: text.tertiary },
   stepMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  notation: { ...type.mono, color: text.primary, flex: 1 },
-  notationSummary: { ...type.caption, color: text.secondary },
+  notationFlex: { flex: 1 },
   stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
+  why: { minHeight: 36, justifyContent: 'center' },
+  whyText: { ...type.caption, fontWeight: '700', color: accent.base },
   tag: {
     ...type.overline,
     flexShrink: 1,
