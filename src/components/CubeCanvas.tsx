@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { LayoutChangeEvent, PanResponder, StyleSheet, View, ViewStyle } from 'react-native';
 import { GLView, ExpoWebGLRenderingContext } from 'expo-gl';
 import { CubeScene, SCENE_BUILD } from '../render/CubeScene';
+import { RenderLoop, createRenderLoop } from '../render/loop';
 
 export interface CubeCanvasProps {
   style?: ViewStyle;
@@ -18,25 +19,20 @@ const TAP_MS = 400;
 
 export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: CubeCanvasProps) {
   const sceneRef = useRef<CubeScene | null>(null);
-  const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
+  const loopRef = useRef<RenderLoop | null>(null);
   const layout = useRef({ width: 1, height: 1 });
   const drag = useRef({ x: 0, y: 0, startX: 0, startY: 0, t: 0, moved: 0 });
-  const frame = useRef<number | null>(null);
-  const alive = useRef(true);
 
-  // One context per mount. Without this the render loop of a torn-down canvas
-  // keeps drawing forever, and a fast refresh leaves two of them running.
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
-      frame.current = null;
-      sceneRef.current?.dispose();
+  // One context per mount. Without the teardown the render loop of a canvas
+  // that is gone keeps drawing forever, and a fast refresh leaves two of them.
+  useEffect(
+    () => () => {
+      loopRef.current?.stop();
+      loopRef.current = null;
       sceneRef.current = null;
-      glRef.current = null;
-    };
-  }, []);
+    },
+    []
+  );
 
   const onContextCreate = useCallback(
     (gl: ExpoWebGLRenderingContext) => {
@@ -52,24 +48,18 @@ export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: Cube
         return;
       }
       sceneRef.current = scene;
-      glRef.current = gl;
+      // Everything about the frame - re-fitting a resized surface, capping the
+      // delta, tearing down exactly once - lives in `render/loop.ts`, where it
+      // can be driven by a fake clock in `verify-render.ts`.
+      loopRef.current?.stop();
+      loopRef.current = createRenderLoop(gl, scene, {
+        // Called on `globalThis`, not as a bare identifier: on web these are
+        // methods of `window` and throw "Illegal invocation" without a receiver.
+        request: (cb) => globalThis.requestAnimationFrame(cb),
+        cancel: (h) => globalThis.cancelAnimationFrame(h),
+      });
+      loopRef.current.start();
       onReady(scene);
-
-      let last = 0;
-      const loop = (now: number) => {
-        if (!alive.current) return;
-        frame.current = requestAnimationFrame(loop);
-        const dt = last ? now - last : 16;
-        last = now;
-        // The drawing buffer follows the surface; nothing tells the scene when
-        // that changes, so it is checked here. Without it a rotation or a
-        // tablet split view leaves the cube oversized, off-centre, and mis-picked.
-        scene.resizeIfNeeded(gl.drawingBufferWidth, gl.drawingBufferHeight);
-        scene.update(Math.min(dt, 64));
-        scene.render();
-        gl.endFrameEXP();
-      };
-      frame.current = requestAnimationFrame(loop);
     },
     [onReady]
   );
@@ -79,8 +69,7 @@ export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: Cube
     layout.current = { width: Math.max(1, width), height: Math.max(1, height) };
     // Picking reads the scene's own aspect, so re-fit as soon as the view
     // changes shape rather than waiting for the next frame.
-    const gl = glRef.current;
-    if (gl) sceneRef.current?.resizeIfNeeded(gl.drawingBufferWidth, gl.drawingBufferHeight);
+    loopRef.current?.syncSize();
   }, []);
 
   const responder = useMemo(
@@ -125,7 +114,16 @@ export function CubeCanvas({ style, onReady, onPickSticker, onGestureEnd }: Cube
   );
 
   return (
-    <View style={[styles.fill, style]} onLayout={onLayout} {...responder.panHandlers}>
+    <View
+      style={[styles.fill, style]}
+      onLayout={onLayout}
+      // The GL surface carries no accessible representation of the cube. The
+      // flat net view is that representation; this stops the canvas being an
+      // unlabelled stop on the way to it.
+      accessible={false}
+      importantForAccessibility="no-hide-descendants"
+      {...responder.panHandlers}
+    >
       {/* expo-gl's multisampled path presents an empty surface here, so the
           renderer does its own antialiasing instead. */}
       <GLView

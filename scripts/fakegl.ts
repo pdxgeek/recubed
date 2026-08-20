@@ -27,6 +27,18 @@ export interface DrawCall {
 export interface FakeGL {
   /** Everything drawn since the last `reset()`. */
   draws: DrawCall[];
+  /** Every `lineWidth` asked for, in order. */
+  lineWidths: number[];
+  /** Attribute name -> the location handed out, so a swap is visible. */
+  attribs: Record<string, number>;
+  /** Set to make `compileShader` report failure, as a driver would. */
+  failCompileWith: string | null;
+  /** Set to make `linkProgram` report failure. */
+  failLinkWith: string | null;
+  /** The GLSL the scene actually uploaded, by shader type. */
+  sources: { vertex: string; fragment: string };
+  /** Every vertexAttribPointer call, so an attribute swap is detectable. */
+  pointers: { index: number; size: number; stride: number; offset: number }[];
   /** uProj / uView as last uploaded. */
   proj: number[];
   view: number[];
@@ -42,12 +54,20 @@ const FLOAT_KEYS = ['uProj', 'uView', 'uModel', 'uNormalMat', 'uColor', 'uUnlit'
 /** A WebGL context that records instead of rasterising. */
 export function createFakeGL(width = 600, height = 900): FakeGL & Record<string, any> {
   const uniformNames = new Map<object, string>();
+  const shaderTypes = new Map<object, number>();
   let bound = 0;
   let nextBuffer = 1;
+  let nextAttrib = 0;
   const uniforms: Record<string, any> = {};
 
   const rec: FakeGL & Record<string, any> = {
     draws: [],
+    lineWidths: [],
+    attribs: {},
+    failCompileWith: null,
+    failLinkWith: null,
+    sources: { vertex: '', fragment: '' },
+    pointers: [],
     proj: [],
     view: [],
     viewportRect: [0, 0, width, height],
@@ -55,6 +75,7 @@ export function createFakeGL(width = 600, height = 900): FakeGL & Record<string,
     drawingBufferHeight: height,
     reset() {
       rec.draws = [];
+      rec.lineWidths = [];
     },
 
     // -- enums (values are arbitrary but distinct) ---------------------------
@@ -76,19 +97,36 @@ export function createFakeGL(width = 600, height = 900): FakeGL & Record<string,
     LINK_STATUS: 0x8b82,
 
     // -- programs -----------------------------------------------------------
-    createShader: () => ({}),
-    shaderSource: () => {},
+    //
+    // Compilation can be made to fail on demand. It is the only handle the
+    // headless suite has on the GLSL, which is otherwise the one part of the
+    // renderer with no coverage at all: a typo there passes every draw-call
+    // assertion and shows up as a black canvas on a device.
+    createShader: (type: number) => {
+      const sh = {};
+      shaderTypes.set(sh, type);
+      return sh;
+    },
+    shaderSource: (sh: object, src: string) => {
+      if (shaderTypes.get(sh) === rec.VERTEX_SHADER) rec.sources.vertex = src;
+      else rec.sources.fragment = src;
+    },
     compileShader: () => {},
-    getShaderParameter: () => true,
-    getShaderInfoLog: () => '',
+    getShaderParameter: () => rec.failCompileWith === null,
+    getShaderInfoLog: () => rec.failCompileWith ?? '',
     createProgram: () => ({}),
     attachShader: () => {},
     linkProgram: () => {},
-    getProgramParameter: () => true,
-    getProgramInfoLog: () => '',
+    getProgramParameter: () => rec.failLinkWith === null,
+    getProgramInfoLog: () => rec.failLinkWith ?? '',
     useProgram: () => {},
     deleteProgram: () => {},
-    getAttribLocation: () => 0,
+    // A distinct location per name, so swapping the two attribute pointers is
+    // visible rather than silently harmless.
+    getAttribLocation: (_p: object, name: string) => {
+      if (!(name in rec.attribs)) rec.attribs[name] = nextAttrib++;
+      return rec.attribs[name];
+    },
     getUniformLocation: (_p: object, name: string) => {
       const handle = {};
       uniformNames.set(handle, name);
@@ -103,7 +141,9 @@ export function createFakeGL(width = 600, height = 900): FakeGL & Record<string,
     bufferData: () => {},
     deleteBuffer: () => {},
     enableVertexAttribArray: () => {},
-    vertexAttribPointer: () => {},
+    vertexAttribPointer: (index: number, size: number, _type: number, _n: boolean, stride: number, offset: number) => {
+      rec.pointers.push({ index, size, stride, offset });
+    },
 
     // -- fixed function -----------------------------------------------------
     enable: () => {},
@@ -112,7 +152,9 @@ export function createFakeGL(width = 600, height = 900): FakeGL & Record<string,
     frontFace: () => {},
     clearColor: () => {},
     clear: () => {},
-    lineWidth: () => {},
+    lineWidth: (w: number) => {
+      rec.lineWidths.push(w);
+    },
     viewport: (x: number, y: number, w: number, h: number) => {
       rec.viewportRect = [x, y, w, h];
     },

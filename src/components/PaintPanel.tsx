@@ -95,7 +95,7 @@ export function PaintPanel({
         </Text>
       </View>
 
-      <View style={styles.grid} accessibilityRole="radiogroup">
+      <View style={styles.grid} accessibilityRole="radiogroup" accessibilityLabel="Sticker colour">
         {COLOR_IDS.map((c) => {
           const n = counts[c];
           const on = active === c;
@@ -140,16 +140,21 @@ export function PaintPanel({
         </Text>
       ) : null}
 
-      {complete ? (
-        <Pressable
-          onPress={onSolveThis}
-          style={styles.primary}
-          accessibilityRole="button"
-          accessibilityLabel="Solve this cube"
-        >
-          <Text style={styles.primaryText}>Solve this cube →</Text>
-        </Pressable>
-      ) : (
+      {/* The primary is stacked ABOVE the actions, never in place of them.
+          Scramble fills all 48 stickers, so a row that disappears at 48/48
+          deletes the app's most-used button the first time it is used - and
+          strands anyone who painted an impossible cube with no way to clear it. */}
+      <View style={styles.foot}>
+        {complete && (
+          <Pressable
+            onPress={onSolveThis}
+            style={styles.primary}
+            accessibilityRole="button"
+            accessibilityLabel="Solve this cube"
+          >
+            <Text style={styles.primaryText}>Solve this cube →</Text>
+          </Pressable>
+        )}
         <View style={styles.actions}>
           <Pressable
             onPress={onFillSolved}
@@ -183,7 +188,7 @@ export function PaintPanel({
             </Text>
           </Pressable>
         </View>
-      )}
+      </View>
     </View>
   );
 }
@@ -191,7 +196,7 @@ export function PaintPanel({
 const { surface, line, text, accent, status, space, type, radius, hit, cube } = tokens;
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, paddingHorizontal: space.gutter, paddingVertical: space.md, gap: space.md },
+  wrap: { paddingHorizontal: space.gutter, paddingVertical: space.md, gap: space.md },
   header: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: hit.min },
   title: { ...type.title, color: text.primary, flex: 1 },
   erase: {
@@ -264,7 +269,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  actions: { flexDirection: 'row', gap: space.sm, marginTop: 'auto' },
+  foot: { gap: space.sm },
+  actions: { flexDirection: 'row', gap: space.sm },
   action: {
     flex: 1,
     minHeight: hit.min,
@@ -279,7 +285,6 @@ const styles = StyleSheet.create({
   actionTextArmed: { color: status.danger },
 
   primary: {
-    marginTop: 'auto',
     minHeight: hit.large,
     justifyContent: 'center',
     alignItems: 'center',

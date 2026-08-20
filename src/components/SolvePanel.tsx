@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
+import { chunkByTriggers } from '../cube/algorithms';
 import { HighlightMode, PiecePair } from '../cube/pieces';
 import { tokens } from '../ui/theme';
 
@@ -30,6 +31,23 @@ const MODE_LABEL: Record<HighlightMode, string> = {
   piece: 'Where does it go?',
   location: 'What goes here?',
 };
+
+/**
+ * A long step written out is a wall of letters: twenty-five moves wrap to three
+ * lines and say nothing. Collapsed rows show what the step is made of instead -
+ * the same chunking the move strip uses - and the row that is actually running
+ * shows the moves in full.
+ */
+function chunkSummary(notation: string): string {
+  const chunks = chunkByTriggers(notation.split(' ').filter(Boolean));
+  return chunks
+    .map((c) =>
+      c.label
+        ? `${c.label}${c.repeat > 1 ? ` ×${c.repeat}` : ''}`
+        : notation.split(' ').slice(c.start, c.start + c.length).join(' ')
+    )
+    .join(' · ');
+}
 
 /** A labelled dot, so the highlight colours are named rather than described. */
 function LegendRow({ color, label }: { color: string; label: string }) {
@@ -109,6 +127,7 @@ export function SolvePanel({
   const methods = [...plan.methods]
     .map((m) => (m.id === 'shortest' && shortest ? shortest : m))
     .sort((a, b) => a.level - b.level);
+  const hasSteps = methods.some((m) => m.steps.length > 0);
 
   const selectionCard = selectedName ? (
     <View style={styles.picked}>
@@ -175,6 +194,12 @@ export function SolvePanel({
         </Text>
       </Pressable>
     </View>
+  ) : hasSteps ? (
+    // One line, not a 96pt box. On an SE the box was larger than the list it
+    // introduced, and a hint above a populated list is not an empty state.
+    <Text style={styles.listHint} numberOfLines={1}>
+      ◇  Tap a piece to look it up
+    </Text>
   ) : (
     <View style={styles.empty} accessibilityRole="summary">
       <Text style={styles.emptyGlyph}>◇</Text>
@@ -198,15 +223,24 @@ export function SolvePanel({
                 </Text>
               )}
             </View>
-            {method.steps.length === 0 && <Text style={styles.methodSub}>{method.subtitle}</Text>}
+            {method.steps.length === 0 && (method.failed || method.id !== 'shortest') && (
+              <Text style={[styles.methodSub, method.failed && styles.methodSubBad]}>
+                {method.subtitle}
+              </Text>
+            )}
 
-            {method.id === 'shortest' && !shortest && (
+            {/* Gated on there being nothing to show rather than on the cache
+                being empty: a search that gave up returns a method too, and
+                gating on that took the retry button away with it. */}
+            {method.id === 'shortest' && method.steps.length === 0 && (
               <Pressable
                 onPress={onComputeShortest}
                 disabled={computing}
                 style={[styles.secondary, computing && styles.primaryBusy]}
                 accessibilityRole="button"
-                accessibilityLabel="Work out the shortest solve"
+                accessibilityLabel={
+                  method.failed ? 'Try the search again' : 'Work out the shortest solve'
+                }
                 accessibilityState={{ disabled: computing, busy: computing }}
               >
                 {computing ? (
@@ -215,7 +249,9 @@ export function SolvePanel({
                     <Text style={styles.secondaryText}>Searching…</Text>
                   </View>
                 ) : (
-                  <Text style={styles.secondaryText}>Work out the shortest solve</Text>
+                  <Text style={styles.secondaryText}>
+                    {method.failed ? 'Try the search again' : 'Work out the shortest solve'}
+                  </Text>
                 )}
               </Pressable>
             )}
@@ -251,10 +287,19 @@ export function SolvePanel({
                         <Text style={styles.chevron}>›</Text>
                       </View>
                       <View style={styles.stepMeta}>
-                        <Text style={styles.notation} numberOfLines={on ? undefined : 1}>
-                          {step.notation}
+                        <Text
+                          style={[styles.notation, !on && styles.notationSummary]}
+                          numberOfLines={on ? undefined : 1}
+                        >
+                          {on || step.moves.length <= 8
+                            ? step.notation
+                            : chunkSummary(step.notation)}
                         </Text>
-                        {step.algorithm && <Text style={styles.tag}>{step.algorithm}</Text>}
+                        {step.algorithm && step.algorithm !== step.title && (
+                          <Text style={styles.tag} numberOfLines={1}>
+                            {step.algorithm}
+                          </Text>
+                        )}
                       </View>
                       {on && <Text style={styles.stepDetail}>{step.detail}</Text>}
                     </View>
@@ -267,7 +312,11 @@ export function SolvePanel({
       </ScrollView>
 
       {!running && (
-        <View style={styles.modes} accessibilityRole="radiogroup">
+        <View
+          style={styles.modes}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="What tapping the cube looks up"
+        >
           {(['piece', 'location'] as HighlightMode[]).map((m) => {
             const on = highlightMode === m;
             return (
@@ -354,6 +403,7 @@ const styles = StyleSheet.create({
     borderColor: line.hairline,
   },
   emptyGlyph: { fontSize: 24, lineHeight: 28, color: text.tertiary },
+  listHint: { ...type.caption, color: text.tertiary, paddingVertical: space.xs },
   emptyTitle: { ...type.body, color: text.secondary },
   emptySub: { ...type.caption, color: text.tertiary },
 
@@ -365,6 +415,7 @@ const styles = StyleSheet.create({
   methodTitle: { ...type.heading, color: text.primary, flex: 1 },
   methodCount: { ...type.caption, ...tokens.numeric, color: text.tertiary },
   methodSub: { ...type.caption, color: text.tertiary, marginTop: space.xs, marginBottom: space.sm },
+  methodSubBad: { color: status.danger },
   group: {
     ...type.overline,
     color: text.tertiary,
@@ -392,9 +443,12 @@ const styles = StyleSheet.create({
   chevron: { ...type.heading, color: text.tertiary },
   stepMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   notation: { ...type.mono, color: text.primary, flex: 1 },
+  notationSummary: { ...type.caption, color: text.secondary },
   stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
   tag: {
     ...type.overline,
+    flexShrink: 1,
+    maxWidth: '52%',
     color: text.primary,
     backgroundColor: accent.soft,
     borderRadius: 6,

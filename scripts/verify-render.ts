@@ -25,6 +25,7 @@ import {
   vecKey,
 } from '../src/cube/core';
 import { CubeScene, SCENE_COLORS } from '../src/render/CubeScene';
+import { createRenderLoop } from '../src/render/loop';
 import { DrawCall, colorHex, createFakeGL, modelKey } from './fakegl';
 
 let fails = 0;
@@ -100,7 +101,7 @@ check('no tile on a caged cubie is drawn',
   JSON.stringify(drawnSlots(bare.stickers)));
 
 // The sharp form of the same claim, stated the way the bug was: the scene
-// flags 45 stickers invisible, and not one of them may reach a draw call.
+// flags 48 stickers invisible, and not one of them may reach a draw call.
 const invisible = SLOTS.map((s) => s.index).filter((i) => !CENTRE_SLOTS.includes(i));
 check('none of the 48 stickers flagged invisible produces a draw call',
   drawnSlots(bare.stickers).every((s) => !invisible.includes(s)),
@@ -217,6 +218,178 @@ frame();
 check('the viewport follows the surface',
   gl.viewportRect[2] === 1024 && gl.viewportRect[3] === 700, JSON.stringify(gl.viewportRect));
 pickRoundTrip('after a landscape resize');
+
+// -- 6. the frame driver ------------------------------------------------------
+//
+// Both of these are bugs that have already happened once: a surface that
+// resized with nothing telling the scene, and a render loop that outlived the
+// canvas that started it. Neither is reachable from a React component in a
+// headless test, which is why the logic lives in `render/loop.ts`.
+{
+  const surface = { drawingBufferWidth: 300, drawingBufferHeight: 400, frames: 0, endFrameEXP() { surface.frames++; } };
+  const seen = { sizes: [] as string[], updates: [] as number[], renders: 0, disposed: 0 };
+  const fake = {
+    resizeIfNeeded(w: number, h: number) {
+      const key = `${w}x${h}`;
+      if (seen.sizes[seen.sizes.length - 1] === key) return false;
+      seen.sizes.push(key);
+      return true;
+    },
+    update(dt: number) {
+      seen.updates.push(dt);
+    },
+    render() {
+      seen.renders++;
+    },
+    dispose() {
+      seen.disposed++;
+    },
+  };
+
+  // A hand-cranked clock, so "a frame happens" is something the test decides.
+  let pending: ((now: number) => void) | null = null;
+  let handles = 0;
+  let cancelled = 0;
+  const scheduler = {
+    request: (cb: (now: number) => void) => {
+      pending = cb;
+      return ++handles;
+    },
+    cancel: () => {
+      cancelled++;
+      pending = null;
+    },
+  };
+  const tick = (now: number) => {
+    const cb = pending;
+    pending = null;
+    cb?.(now);
+  };
+
+  const loop = createRenderLoop(surface, fake, scheduler);
+  loop.start();
+  tick(0);
+  tick(16);
+  check('the loop draws a frame per tick', seen.renders === 2, `${seen.renders}`);
+  check('and presents each one', surface.frames === 2, `${surface.frames}`);
+  check('the scene is fitted to the surface on the first frame',
+    seen.sizes[0] === '300x400', JSON.stringify(seen.sizes));
+
+  // The regression: the surface changes and nothing announces it.
+  surface.drawingBufferWidth = 800;
+  surface.drawingBufferHeight = 500;
+  tick(32);
+  check('a surface that changes size is picked up without being told',
+    seen.sizes.includes('800x500'), JSON.stringify(seen.sizes));
+
+  // ...and a layout change should not have to wait for the next frame.
+  surface.drawingBufferWidth = 640;
+  loop.syncSize();
+  check('syncSize re-fits immediately, for a layout change',
+    seen.sizes[seen.sizes.length - 1] === '640x500', JSON.stringify(seen.sizes));
+
+  // A long pause must not be integrated in one go.
+  tick(9000);
+  check('a long gap between frames is capped', Math.max(...seen.updates) <= 64,
+    JSON.stringify(seen.updates));
+
+  // The other regression: the canvas goes away and the loop keeps drawing.
+  const before = seen.renders;
+  loop.stop();
+  check('stopping cancels the frame that was queued', cancelled === 1);
+  check('and disposes the scene', seen.disposed === 1);
+  tick(9100);
+  check('a stopped loop draws nothing, even if a frame fires late',
+    seen.renders === before, `${seen.renders - before} extra frames`);
+  loop.stop();
+  check('stopping twice disposes once', seen.disposed === 1);
+  check('a stopped loop says so', loop.running === false);
+
+  // Cancelling is not the only defence, and must not be the only one: a frame
+  // can already be in flight when the canvas goes away. The loop has to refuse
+  // to draw it, and above all must not queue another - that is how a fast
+  // refresh ended up with two loops rendering forever.
+  const stubborn = { queued: null as ((now: number) => void) | null, requests: 0 };
+  const deaf = {
+    request: (cb: (now: number) => void) => {
+      stubborn.queued = cb;
+      stubborn.requests++;
+      return stubborn.requests;
+    },
+    cancel: () => {
+      /* a cancel that does not arrive in time */
+    },
+  };
+  const marks = { renders: 0, disposed: 0 };
+  const zombie = createRenderLoop(surface, {
+    resizeIfNeeded: () => false,
+    update: () => {},
+    render: () => {
+      marks.renders++;
+    },
+    dispose: () => {
+      marks.disposed++;
+    },
+  }, deaf);
+  zombie.start();
+  stubborn.queued?.(0);
+  check('the loop runs while it is alive', marks.renders === 1, `${marks.renders}`);
+  zombie.stop();
+  const requestsAtStop = stubborn.requests;
+  stubborn.queued?.(16);
+  check('a frame that fires after teardown draws nothing',
+    marks.renders === 1, `${marks.renders - 1} zombie frames`);
+  check('and does not queue another one',
+    stubborn.requests === requestsAtStop, `${stubborn.requests - requestsAtStop} re-queued`);
+}
+
+// -- 7. the harness itself can tell a broken renderer from a working one ------
+{
+  const g = createFakeGL(200, 200);
+  check('the two vertex attributes get distinct locations',
+    g.getAttribLocation({}, 'aPos') !== g.getAttribLocation({}, 'aNormal'));
+
+  const g2 = createFakeGL(200, 200);
+  const s2 = new CubeScene(g2 as unknown as WebGLRenderingContext, 200, 200);
+  check('the scene uploads both shaders',
+    g2.sources.vertex.includes('gl_Position') && g2.sources.fragment.includes('gl_FragColor'),
+    `${g2.sources.vertex.length}/${g2.sources.fragment.length} chars`);
+  g2.reset();
+  s2.setWireframe(true);
+  s2.render();
+  check('the two attribute pointers are bound to different locations',
+    new Set(g2.pointers.map((p) => p.index)).size === 2,
+    JSON.stringify(g2.pointers.slice(0, 4)));
+  check('position and normal read different parts of the same vertex',
+    g2.pointers.every((p) => p.stride === 24) &&
+      new Set(g2.pointers.map((p) => p.offset)).size === 2,
+    JSON.stringify(g2.pointers.slice(0, 2)));
+  check('the cage asks for a line wider than a hair',
+    g2.lineWidths.some((w) => w >= 2), JSON.stringify(g2.lineWidths));
+
+  // A driver that rejects the GLSL must surface, not paint a black canvas.
+  const g3 = createFakeGL(200, 200);
+  g3.failCompileWith = 'ERROR: 0:12: syntax error';
+  let threw = '';
+  try {
+    new CubeScene(g3 as unknown as WebGLRenderingContext, 200, 200);
+  } catch (err) {
+    threw = String(err);
+  }
+  check('a shader that will not compile throws, carrying the driver log',
+    threw.includes('syntax error'), threw || 'nothing thrown');
+
+  const g4 = createFakeGL(200, 200);
+  g4.failLinkWith = 'ERROR: link failed';
+  let threw2 = '';
+  try {
+    new CubeScene(g4 as unknown as WebGLRenderingContext, 200, 200);
+  } catch (err) {
+    threw2 = String(err);
+  }
+  check('a program that will not link throws too', threw2.includes('link failed'),
+    threw2 || 'nothing thrown');
+}
 
 console.log(fails ? `\n${fails} renderer check(s) failed` : '\nall renderer checks passed');
 process.exit(fails ? 1 : 0);

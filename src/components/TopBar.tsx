@@ -4,13 +4,23 @@ import { tokens } from '../ui/theme';
 
 export type Mode = 'paint' | 'solve';
 
+export type CubeView = '3d' | 'net';
+
 interface Props {
   mode: Mode;
   onMode: (m: Mode) => void;
+  view: CubeView;
+  onView: (v: CubeView) => void;
   wireframe: boolean;
   onWireframe: (v: boolean) => void;
   onResetView: () => void;
 }
+
+const VIEW_LABEL: Record<CubeView, string> = { '3d': '3D', net: 'Net' };
+const VIEW_HINT: Record<CubeView, string> = {
+  '3d': '3D cube view',
+  net: 'Flat net view',
+};
 
 const LABEL: Record<Mode, string> = { paint: 'Paint', solve: 'Solve' };
 const HINT: Record<Mode, string> = {
@@ -18,10 +28,10 @@ const HINT: Record<Mode, string> = {
   solve: 'Solve the cube',
 };
 
-export function TopBar({ mode, onMode, wireframe, onWireframe, onResetView }: Props) {
+export function TopBar({ mode, onMode, view, onView, wireframe, onWireframe, onResetView }: Props) {
   return (
     <View style={styles.bar}>
-      <View style={styles.segment} accessibilityRole="tablist">
+      <View style={styles.segment} accessibilityRole="tablist" accessibilityLabel="Mode">
         {(['paint', 'solve'] as Mode[]).map((m) => {
           const on = mode === m;
           return (
@@ -42,29 +52,60 @@ export function TopBar({ mode, onMode, wireframe, onWireframe, onResetView }: Pr
         })}
       </View>
       <View style={styles.right}>
-        <Pressable
-          onPress={() => onWireframe(!wireframe)}
-          style={[styles.btn, wireframe && styles.btnOn]}
-          accessibilityRole="switch"
-          accessibilityLabel="X-ray view"
-          accessibilityState={{ checked: wireframe }}
-          accessibilityHint="Hides the solved stickers so you can watch the pieces that matter"
-        >
-          <View style={[styles.dot, wireframe && styles.dotOn]} />
-          <Text style={[styles.btnText, wireframe && styles.btnTextOn]} maxFontSizeMultiplier={1.4}>
-            X-ray
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={onResetView}
-          style={styles.btn}
-          accessibilityRole="button"
-          accessibilityLabel="Reset the view"
-        >
-          <Text style={styles.btnText} maxFontSizeMultiplier={1.4}>
-            Reset view
-          </Text>
-        </Pressable>
+        <View style={styles.segment} accessibilityRole="tablist" accessibilityLabel="Cube view">
+          {(['3d', 'net'] as CubeView[]).map((v) => {
+            const on = view === v;
+            return (
+              <Pressable
+                key={v}
+                onPress={() => onView(v)}
+                style={[styles.viewItem, on && styles.segItemOn]}
+                accessibilityRole="tab"
+                accessibilityLabel={VIEW_HINT[v]}
+                accessibilityState={{ selected: on }}
+              >
+                <Text
+                  style={[styles.btnText, on && styles.btnTextOn]}
+                  maxFontSizeMultiplier={1.4}
+                >
+                  {VIEW_LABEL[v]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {/* X-ray strips the 3D cube back to a cage; there is nothing for it to
+            do to a flat net, where every sticker is already legible. */}
+        {view === '3d' && (
+          <Pressable
+            onPress={() => onWireframe(!wireframe)}
+            style={[styles.btn, wireframe && styles.btnOn]}
+            accessibilityRole="switch"
+            accessibilityLabel="X-ray view"
+            accessibilityState={{ checked: wireframe }}
+            accessibilityHint="Hides the solved stickers so you can watch the pieces that matter"
+          >
+            <View style={[styles.dot, wireframe && styles.dotOn]} />
+            <Text
+              style={[styles.btnText, wireframe && styles.btnTextOn]}
+              maxFontSizeMultiplier={1.4}
+            >
+              X-ray
+            </Text>
+          </Pressable>
+        )}
+        {view === '3d' && (
+          <Pressable
+            onPress={onResetView}
+            style={styles.btn}
+            accessibilityRole="button"
+            accessibilityLabel="Reset the view"
+          >
+            <Text style={styles.btnText} maxFontSizeMultiplier={1.4}>
+              Reset
+            </Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );
@@ -76,8 +117,8 @@ const styles = StyleSheet.create({
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.gutter,
+    gap: 6,
+    paddingHorizontal: space.md,
     paddingVertical: space.sm,
     backgroundColor: surface.base,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -90,11 +131,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: 3,
   },
+  viewItem: {
+    minHeight: hit.min,
+    minWidth: hit.min,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    borderRadius: radius.sm,
+  },
   segItem: {
     minHeight: hit.min,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: space.lg,
+    paddingHorizontal: space.md,
     borderRadius: radius.sm,
   },
   segItemOn: { backgroundColor: accent.soft },
@@ -103,13 +152,13 @@ const styles = StyleSheet.create({
   // A second, non-colour carrier for the selected tab.
   segRule: { height: 2, width: 20, marginTop: 3, borderRadius: 1, backgroundColor: 'transparent' },
   segRuleOn: { backgroundColor: accent.base },
-  right: { flexDirection: 'row', gap: space.sm, marginLeft: 'auto' },
+  right: { flexDirection: 'row', gap: 6, marginLeft: 'auto', flexShrink: 1 },
   btn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     minHeight: hit.min,
-    paddingHorizontal: space.md,
+    paddingHorizontal: space.sm,
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: line.outline,

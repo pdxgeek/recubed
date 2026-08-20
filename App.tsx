@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   Animated,
+  Platform,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -9,15 +11,12 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import {
+  COLOR_NAME,
   ColorId,
   CubeState,
-  Move,
   SLOTS,
   applyAlg,
-  applyMove,
   blankState,
-  cloneState,
-  invertMove,
   isCenter,
   solvedState,
   vecKey,
@@ -35,33 +34,39 @@ import {
   selectionSlots as slotsOfSelection,
   stepForSelection as stepFor,
 } from './src/cube/selection';
-import { stepStartState } from './src/cube/run';
+import {
+  Playback,
+  atEnd as playbackAtEnd,
+  atStart as playbackAtStart,
+  back as playbackBack,
+  close as playbackClose,
+  forward as playbackForward,
+  nextMove,
+  prevMove,
+  restart as playbackRestart,
+  selectStep,
+} from './src/cube/run';
 import {
   PlanMethod,
   PlanStep,
   SolvePlan,
   buildPlan,
   buildShortest,
+  cubeKey,
+  currentShortest,
   prepareShortest,
   relabelMethod,
+  stageProgress,
 } from './src/cube/solver/plan';
 import { CubeScene } from './src/render/CubeScene';
 import { CubeCanvas } from './src/components/CubeCanvas';
-import { TopBar, Mode } from './src/components/TopBar';
+import { TopBar, CubeView, Mode } from './src/components/TopBar';
+import { CubeNet } from './src/components/CubeNet';
 import { PaintPanel } from './src/components/PaintPanel';
 import { SolvePanel } from './src/components/SolvePanel';
 import { StepBar } from './src/components/StepBar';
 import { MoveStrip } from './src/components/MoveStrip';
 import { tokens } from './src/ui/theme';
-
-interface ActiveRun {
-  id: string;
-  title: string;
-  moves: Move[];
-  targetSlots: number[];
-  /** Solve steps leave the cube where they finish; library previews undo. */
-  commitOnClose: boolean;
-}
 
 /**
  * Whether the "drag to spin" nudge has already been shown. Module scope, so it
@@ -72,11 +77,11 @@ let canvasNudgeSeen = false;
 
 export default function App() {
   const sceneRef = useRef<CubeScene | null>(null);
-  const baseState = useRef<CubeState | null>(null);
   const liveState = useRef<CubeState | null>(null);
   /**
-   * The cube the current plan describes. Step preludes are absolute, measured
-   * from here - not from wherever the last step happened to leave the cube.
+   * The cube the current plan describes, used only to open the first step of a
+   * session. Once a session is open, `selectStep` reads the origin out of the
+   * session itself, so there is no second cube for this component to get wrong.
    */
   const planOrigin = useRef<CubeState | null>(null);
   const { width, height } = useWindowDimensions();
@@ -96,17 +101,25 @@ export default function App() {
    */
   const [sceneEpoch, setSceneEpoch] = useState(0);
   const [mode, setMode] = useState<Mode>('paint');
-  const [state, setState] = useState<CubeState>(() => blankState());
+  /** The cube when no step is open. While one is, `playback.live` is the cube. */
+  const [resting, setResting] = useState<CubeState>(() => blankState());
+  /**
+   * The step being stepped through, if any. This is `src/cube/run.ts`'s state,
+   * held whole: the app moves it with that module's functions rather than
+   * keeping a second copy of the arithmetic.
+   */
+  const [playback, setPlayback] = useState<Playback | null>(null);
+  const state = playback ? playback.live : resting;
+  const step = playback?.index ?? 0;
   const [paintColor, setPaintColor] = useState<ColorId | null>('W');
   /** One piece or slot at a time, held by identity rather than by position. */
   const [selection, setSelection] = useState<Selection | null>(null);
   const [highlightMode, setHighlightMode] = useState<HighlightMode>('piece');
   const [showPartner, setShowPartner] = useState(true);
-  const [run, setRun] = useState<ActiveRun | null>(null);
-  const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speedMs, setSpeedMs] = useState(850);
   const [wireframe, setWireframe] = useState(false);
+  const [view, setView] = useState<CubeView>('3d');
   const [paintNudge, setPaintNudge] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<SolvePlan | null>(null);
@@ -123,13 +136,15 @@ export default function App() {
   );
   const selectedName = useMemo(() => nameOfSelection(state, selection), [state, selection]);
   const stepForSelection = useMemo(() => stepFor(plan, selection), [plan, selection]);
+  /** A search result is worth showing only while it still describes this cube. */
+  const liveShortest = useMemo(() => currentShortest(shortest, state), [shortest, state]);
 
   /** Pieces the running step is moving, followed as the cube turns. */
   const runTargetSlots = useMemo(() => {
-    if (!run) return [];
-    const homes = new Set(run.targetSlots);
+    if (!playback) return [];
+    const homes = new Set(playback.step.targetSlots);
     return SLOTS.filter((s) => homes.has(state.home[s.index])).map((s) => s.index);
-  }, [run, state]);
+  }, [playback, state]);
 
   /** Everything worth keeping solid when the cube is stripped to a wireframe. */
   const focusSlots = useMemo(
@@ -139,15 +154,11 @@ export default function App() {
 
   const targetKeys = useMemo(() => focusSlots.map((i) => vecKey(SLOTS[i].pos)), [focusSlots]);
 
-  /** Where the running step sits in its method, for the transport bar. */
-  const runPosition = useMemo(() => {
-    if (!run || !plan?.ok) return null;
-    for (const method of plan.methods) {
-      const i = method.steps.findIndex((s) => s.id === run.id);
-      if (i >= 0) return `Step ${i + 1} of ${method.steps.length}`;
-    }
-    return null;
-  }, [run, plan]);
+  /** Where the running step sits in the method's stages, for the transport bar. */
+  const runStage = useMemo(
+    () => stageProgress(plan, playback?.step.id ?? null),
+    [plan, playback]
+  );
 
   // -- scene sync ----------------------------------------------------------
 
@@ -174,12 +185,48 @@ export default function App() {
     });
   }, [targetKeys, wireframe, selectionSlots, partnerSlots, runTargetSlots, sceneEpoch]);
 
-  // Work out what is left to do whenever the cube settles.
+  /**
+   * Work out what is left to do whenever the cube settles. Guarded on the cube
+   * itself rather than on the state object, so a re-render that hands over an
+   * equal cube does not pay for a fresh solve.
+   */
+  const planKey = useRef<string | null>(null);
   useEffect(() => {
-    if (mode !== 'solve' || run) return;
+    if (mode !== 'solve' || playback) {
+      planKey.current = null;
+      return;
+    }
+    const key = cubeKey(state);
     planOrigin.current = state;
+    if (planKey.current === key) return;
+    planKey.current = key;
     setPlan(buildPlan(state));
-  }, [mode, state, run]);
+  }, [mode, state, playback]);
+
+  /**
+   * A screen-reader user gets the net by default: the 3D view is a gesture
+   * surface with nothing in the accessibility tree, so on that path it is not a
+   * view of the cube at all. Both views stay available to everyone.
+   *
+   * Native only. The web platform cannot detect a screen reader, and
+   * react-native-web's `isScreenReaderEnabled` answers `true` unconditionally -
+   * so honouring it there would put every browser visitor in the net view. On
+   * web the Net tab is one labelled stop away instead.
+   */
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let cancelled = false;
+    AccessibilityInfo.isScreenReaderEnabled().then((on) => {
+      if (!cancelled && on) setView('net');
+    });
+    const sub = AccessibilityInfo.addEventListener('screenReaderChanged', (on) => {
+      if (on) setView('net');
+    });
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
 
   // -- the one-shot canvas nudge -------------------------------------------
 
@@ -221,7 +268,7 @@ export default function App() {
         return;
       }
       if (mode === 'paint') {
-        setState((s) => {
+        setResting((s) => {
           const colors = s.colors.slice();
           colors[slot] = paintColor;
           return { ...s, colors };
@@ -258,7 +305,7 @@ export default function App() {
   const anchorToView = useCallback(() => {
     const scene = sceneRef.current;
     const current = liveState.current;
-    if (!scene || !current || run) return;
+    if (!scene || !current || playback) return;
     const { down, front } = scene.viewFaces();
     const rot = rotationBringing(down, front);
     if (!rot || rot.alg === '') return;
@@ -267,87 +314,81 @@ export default function App() {
     liveState.current = next;
     scene.setColors(next);
     scene.absorbRotation(rot);
-    setState(next);
+    setResting(next);
     // The cube has not changed, only its labels - so the search result is
-    // rewritten for the new labels rather than discarded.
-    setShortest((prev) => (prev ? relabelMethod(prev, rot) : prev));
-  }, [run]);
+    // rewritten for the new labels, and re-stamped with the re-labelled cube so
+    // it still matches. Anything that changes the cube for real fails the stamp.
+    setShortest((prev) => (prev ? relabelMethod(prev, rot, next) : prev));
+  }, [playback]);
 
   const restoreBase = useCallback(() => {
     sceneRef.current?.cancelMove();
-    if (baseState.current) setState(cloneState(baseState.current));
-    setStep(0);
     setPlaying(false);
+    setPlayback((p) => (p ? playbackRestart(p) : p));
   }, []);
 
-  const startRun = useCallback((next: ActiveRun, base: CubeState) => {
+  const startStep = useCallback((st: PlanStep) => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
-    baseState.current = base;
-    liveState.current = base;
-    setState(cloneState(base));
-    setStep(0);
-    setRun(next);
-  }, []);
+    // `selectStep` reads the origin out of the session when there is one, so a
+    // second step picked mid-run is measured from the cube the plan describes -
+    // not from wherever the first step left off, which stacked two preludes.
+    setPlayback((p) => selectStep(p, p?.origin ?? planOrigin.current ?? state, st));
+  }, [state]);
 
   const closeRun = useCallback(() => {
-    if (!run?.commitOnClose) restoreBase();
-    else {
-      sceneRef.current?.cancelMove();
-      setPlaying(false);
-      setStep(0);
-      baseState.current = state;
-      // The finished cube is what the next plan - and the next prelude - are
-      // measured from.
-      planOrigin.current = state;
-    }
-    setRun(null);
-  }, [run, restoreBase, state]);
+    sceneRef.current?.cancelMove();
+    setPlaying(false);
+    setPlayback((p) => {
+      if (!p) return null;
+      const kept = playbackClose(p);
+      setResting(kept);
+      // The cube left behind is what the next plan - and so the next step's
+      // prelude - is measured from.
+      planOrigin.current = kept;
+      return null;
+    });
+  }, []);
 
   const stepForward = useCallback(() => {
     const scene = sceneRef.current;
-    if (!scene || !run || scene.isAnimating) return;
-    const mv = run.moves[step];
+    if (!scene || !playback || scene.isAnimating) return;
+    const mv = nextMove(playback);
     if (!mv) {
       setPlaying(false);
       return;
     }
-    scene.playMove(mv, speedMs, () => {
-      setState((s) => applyMove(s, mv));
-      setStep((i) => i + 1);
-    });
-  }, [run, step, speedMs]);
+    scene.playMove(mv, speedMs, () => setPlayback((p) => (p ? playbackForward(p) : p)));
+  }, [playback, speedMs]);
 
   const stepBack = useCallback(() => {
     const scene = sceneRef.current;
-    if (!scene || !run || scene.isAnimating || step === 0) return;
-    const mv = invertMove(run.moves[step - 1]);
+    if (!scene || !playback || scene.isAnimating) return;
+    const mv = prevMove(playback);
+    if (!mv) return;
     setPlaying(false);
-    scene.playMove(mv, speedMs, () => {
-      setState((s) => applyMove(s, mv));
-      setStep((i) => i - 1);
-    });
-  }, [run, step, speedMs]);
+    scene.playMove(mv, speedMs, () => setPlayback((p) => (p ? playbackBack(p) : p)));
+  }, [playback, speedMs]);
 
   useEffect(() => {
-    if (!playing || !run) return;
-    if (step >= run.moves.length) {
+    if (!playing || !playback) return;
+    if (playbackAtEnd(playback)) {
       setPlaying(false);
       return;
     }
     const id = setTimeout(stepForward, 140);
     return () => clearTimeout(id);
-  }, [playing, step, run, stepForward]);
+  }, [playing, playback, stepForward]);
 
   const onPlayPause = useCallback(() => {
-    if (!run) return;
+    if (!playback) return;
     if (playing) {
       setPlaying(false);
       return;
     }
-    if (step >= run.moves.length) restoreBase();
+    if (playbackAtEnd(playback)) restoreBase();
     setPlaying(true);
-  }, [run, playing, step, restoreBase]);
+  }, [playback, playing, restoreBase]);
 
   const onModeChange = useCallback(
     (m: Mode) => {
@@ -361,19 +402,12 @@ export default function App() {
 
   const setCubeState = useCallback((next: CubeState) => {
     sceneRef.current?.cancelMove();
-    setRun(null);
+    setPlayback(null);
     setPlaying(false);
-    setStep(0);
-    setShortest(null);
     setSelection(null);
-    baseState.current = next;
     planOrigin.current = next;
-    setState(next);
+    setResting(next);
   }, []);
-
-  useEffect(() => {
-    if (!run) baseState.current = state;
-  }, [state, run]);
 
   const scramble = useCallback(() => {
     const faces = ['U', 'D', 'R', 'L', 'F', 'B'];
@@ -405,23 +439,6 @@ export default function App() {
 
   // -- panels --------------------------------------------------------------
 
-  const startStep = useCallback(
-    (st: PlanStep) => {
-      const origin = planOrigin.current ?? state;
-      startRun(
-        {
-          id: st.id,
-          title: st.title,
-          moves: st.moves,
-          targetSlots: st.targetSlots,
-          commitOnClose: true,
-        },
-        stepStartState(origin, st)
-      );
-    },
-    [startRun, state]
-  );
-
   const panel =
     mode === 'paint' ? (
       <PaintPanel
@@ -437,11 +454,11 @@ export default function App() {
     ) : (
       <SolvePanel
         plan={plan ?? { ok: true, solved: false, methods: [] }}
-        shortest={shortest}
+        shortest={liveShortest}
         computing={computing}
         onComputeShortest={computeShortest}
-        activeStepId={run?.id ?? null}
-        running={!!run}
+        activeStepId={playback?.step.id ?? null}
+        running={!!playback}
         onSelectStep={startStep}
         onGoPaint={() => onModeChange('paint')}
         highlightMode={highlightMode}
@@ -461,18 +478,41 @@ export default function App() {
       <TopBar
         mode={mode}
         onMode={onModeChange}
+        view={view}
+        onView={setView}
         wireframe={wireframe}
         onWireframe={setWireframe}
         onResetView={() => sceneRef.current?.resetOrientation()}
       />
       <View style={[styles.body, wide ? styles.bodyRow : styles.bodyCol]}>
-        <View style={styles.canvasWrap}>
-          <CubeCanvas
-            onReady={onSceneReady}
-            onPickSticker={onPickSticker}
-            onGestureEnd={anchorToView}
-          />
-          {nudgeVisible && !run && (
+        <View style={[styles.canvasWrap, playback && styles.canvasWrapRunning]}>
+          {/* The GL surface stays mounted while the net is showing: unmounting
+              it tears the scene down (as it must on a real unmount), and every
+              toggle would then pay for a full rebuild. */}
+          <View style={view === 'net' ? styles.hidden : styles.fill}>
+            <CubeCanvas
+              onReady={onSceneReady}
+              onPickSticker={onPickSticker}
+              onGestureEnd={anchorToView}
+            />
+          </View>
+          {view === 'net' && (
+            <CubeNet
+              state={state}
+              mode={mode}
+              paintColor={paintColor ? COLOR_NAME[paintColor] : null}
+              onPickSticker={onPickSticker}
+              selectedSlots={selectionSlots}
+              partnerSlots={partnerSlots}
+              movingSlots={runTargetSlots}
+              status={
+                mode === 'paint'
+                  ? `${state.colors.filter((c) => c !== null).length - 6} of 48 painted`
+                  : (selectedName ?? 'Nothing selected')
+              }
+            />
+          )}
+          {nudgeVisible && !playback && view === '3d' && (
             <Animated.View
               style={[styles.overlay, { opacity: nudgeOpacity }]}
               pointerEvents="none"
@@ -484,26 +524,39 @@ export default function App() {
               </Text>
             </Animated.View>
           )}
-          {run && <MoveStrip title={run.title} moves={run.moves} step={step} />}
+          {playback && (
+            <MoveStrip
+              title={playback.step.title}
+              moves={playback.step.moves}
+              step={step}
+              wireframe={wireframe}
+              onWireframe={setWireframe}
+            />
+          )}
         </View>
         <View
           style={[
             styles.panel,
             wide
               ? [styles.panelSide, { width: Math.min(400, Math.max(300, width * 0.38)) }]
-              : [styles.panelBottom, { minHeight: run ? Math.min(200, sheetMin) : sheetMin }],
+              : [
+                  styles.panelBottom,
+                  playback
+                    ? { minHeight: Math.min(200, sheetMin), maxHeight: '38%' as const }
+                    : { minHeight: sheetMin },
+                ],
           ]}
         >
           {panel}
         </View>
       </View>
-      {run && (
+      {playback && (
         <StepBar
-          atStart={step === 0}
-          atEnd={step >= run.moves.length}
+          atStart={playbackAtStart(playback)}
+          atEnd={playbackAtEnd(playback)}
           playing={playing}
           speedMs={speedMs}
-          position={runPosition}
+          stage={runStage}
           onPrev={stepBack}
           onNext={() => {
             setPlaying(false);
@@ -512,7 +565,7 @@ export default function App() {
           onPlayPause={onPlayPause}
           onRestart={restoreBase}
           onSpeed={setSpeedMs}
-          closeLabel={run.commitOnClose ? 'Keep' : 'Undo'}
+          closeLabel={playback.commit ? 'Keep' : 'Undo'}
           onClose={closeRun}
         />
       )}
@@ -527,7 +580,13 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
   bodyRow: { flexDirection: 'row' },
   bodyCol: { flexDirection: 'column' },
+  fill: { flex: 1 },
+  hidden: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -9999 },
   canvasWrap: { flex: 1 },
+  // Room for the MoveStrip, so the cube is fitted above it rather than drawn
+  // behind it. Without this the strip's scrim hides the whole bottom layer -
+  // during playback, which is exactly when it matters.
+  canvasWrapRunning: { paddingBottom: 108 },
   overlay: { position: 'absolute', bottom: 14, left: 0, right: 0, alignItems: 'center' },
   overlayText: {
     ...tokens.type.caption,
@@ -540,6 +599,7 @@ const styles = StyleSheet.create({
   },
   panel: { backgroundColor: surface.base },
   panelSide: {
+    justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: line.hairline,
   },

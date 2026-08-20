@@ -1,5 +1,6 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StageProgress } from '../cube/solver/plan';
 import { tokens } from '../ui/theme';
 
 export const SPEEDS = [
@@ -13,8 +14,11 @@ interface Props {
   atEnd: boolean;
   playing: boolean;
   speedMs: number;
-  /** Where this step sits in the plan, e.g. "Step 3 of 18". */
-  position?: string | null;
+  /**
+   * Where this step sits in the method's stages. Shown in the counter slot that
+   * already existed, so the rail costs no height on a phone.
+   */
+  stage?: StageProgress | null;
   onPrev: () => void;
   onNext: () => void;
   onPlayPause: () => void;
@@ -29,7 +33,7 @@ export function StepBar({
   atEnd,
   playing,
   speedMs,
-  position,
+  stage,
   onPrev,
   onNext,
   onPlayPause,
@@ -41,7 +45,19 @@ export function StepBar({
   return (
     <View style={styles.outer}>
       <View style={styles.head}>
-        <Text style={styles.position}>{position ?? ''}</Text>
+        <View style={styles.stage}>
+          <Text style={styles.position} numberOfLines={1}>
+            {stage ? `${stage.group} · ${stage.step} of ${stage.steps}` : ''}
+          </Text>
+          <View style={styles.stageTrack}>
+            <View
+              style={[
+                styles.stageFill,
+                { width: `${stage ? (stage.step / Math.max(1, stage.steps)) * 100 : 0}%` },
+              ]}
+            />
+          </View>
+        </View>
         <Pressable
           onPress={onClose}
           style={[styles.done, closeLabel === 'Keep' && styles.doneKeep]}
@@ -144,7 +160,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.gutter,
     paddingTop: 4,
   },
-  position: { ...type.overline, color: text.tertiary, textTransform: 'uppercase', flex: 1 },
+  stage: { flex: 1, gap: 3 },
+  position: { ...type.overline, color: text.tertiary, textTransform: 'uppercase' },
+  stageTrack: { height: 2, borderRadius: 1, backgroundColor: line.hairline, overflow: 'hidden' },
+  stageFill: { height: 2, backgroundColor: accent.base },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -77,6 +77,15 @@ export interface PlanMethod {
   totalMoves: number;
   /** True while the method still needs work done off the main thread. */
   pending?: boolean;
+  /** True when the search gave up. There is nothing to show; offer a retry. */
+  failed?: boolean;
+  /**
+   * The cube this method was computed for, as a colour key. A search result is
+   * only worth showing while it still describes the cube on screen; without the
+   * stamp a stale twenty-move solve is displayed - and is runnable - after the
+   * user plays a step and keeps it.
+   */
+  forCube?: string;
 }
 
 export interface SolvePlan {
@@ -118,6 +127,13 @@ export function orientationForBeginner(state: CubeState): string {
   }
   return '';
 }
+
+/**
+ * A cube's identity as a plain string. Two cubes with the same key are the same
+ * cube, sticker for sticker; piece tracking is deliberately not included, since
+ * it says where pieces came from rather than what the cube is.
+ */
+export const cubeKey = (state: CubeState) => state.colors.map((c) => c ?? '.').join('');
 
 /** Slot indices of every sticker on the given cubies. */
 const slotsOn = (cubies: Vec3[]) => {
@@ -169,17 +185,18 @@ export function colorKeyOfSlot(state: CubeState, slot: Vec3): string {
 }
 
 export function colorKeyOfCubie(state: CubeState, pos: Vec3): string {
-  return SLOTS.filter((s) => vecKey(s.pos) === vecKey(pos))
-    .map((s) => state.colors[s.index] ?? '?')
-    .sort()
-    .join('');
+  // Indexed, not filtered: this is called for every piece of every step while a
+  // plan is built, and a 54-element scan per call was most of what made
+  // building one slow enough to feel.
+  const slots = SLOTS_BY_CUBIE.get(vecKey(pos)) ?? [];
+  const out: string[] = [];
+  for (const i of slots) out.push(state.colors[i] ?? '?');
+  return out.sort().join('');
 }
 
 /** What a learner would call the piece sitting at a position right now. */
 export function describeCubie(state: CubeState, pos: Vec3): string {
-  const colours = SLOTS.filter((s) => vecKey(s.pos) === vecKey(pos)).map(
-    (s) => state.colors[s.index]
-  );
+  const colours = (SLOTS_BY_CUBIE.get(vecKey(pos)) ?? []).map((i) => state.colors[i]);
   const names = orderedColours(colours);
   const kind = colours.length === 3 ? 'corner' : colours.length === 2 ? 'edge' : 'centre';
   return `${names.join('-')} ${kind}`;
@@ -188,15 +205,20 @@ export function describeCubie(state: CubeState, pos: Vec3): string {
 const sentenceCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const MOVABLE_CUBIES = CUBIES.filter((p) => cubieKind(p) >= 2);
+/** Slot indices per cubie, and the centre slot each of them answers to. */
+const SLOT_CACHE = new Map<string, number[]>(
+  MOVABLE_CUBIES.map((p) => [vecKey(p), SLOTS_BY_CUBIE.get(vecKey(p)) ?? []])
+);
+const CENTRE_OF_SLOT = SLOTS.map((s) => CENTER_SLOT[s.face]);
 
 /** Colour keys of every piece sitting in its own slot, the right way up. */
 function solvedPieceKeys(state: CubeState): Set<string> {
   const out = new Set<string>();
   for (const p of MOVABLE_CUBIES) {
-    const slots = SLOTS_BY_CUBIE.get(vecKey(p)) ?? [];
+    const slots = SLOT_CACHE.get(vecKey(p))!;
     const home = slots.every((i) => {
       const c = state.colors[i];
-      return c !== null && c === state.colors[CENTER_SLOT[SLOTS[i].face]];
+      return c !== null && c === state.colors[CENTRE_OF_SLOT[i]];
     });
     if (home) out.add(colorKeyOfCubie(state, p));
   }
@@ -275,7 +297,9 @@ export function buildPlan(state: CubeState): SolvePlan {
         steps.push({
           id: `beginner-${stage.id}-${steps.length}`,
           group: stage.title,
-          title: named ? sentenceCase(named) : step.algorithm ?? stage.title,
+          // Title = what this step is about; tag = the algorithm's short name.
+          // Never the same string twice in one row.
+          title: named ? sentenceCase(named) : step.title || step.algorithm || stage.title,
           detail: step.detail,
           algorithm: step.algorithm,
           notation: formatAlg(step.moves),
@@ -291,6 +315,22 @@ export function buildPlan(state: CubeState): SolvePlan {
         // Remember where each step leaves the cube, so the pass below can work
         // out which step actually finishes each piece.
         after.set(steps[steps.length - 1].id, cursor);
+      }
+    }
+
+    // A plan can run the same algorithm several times. Identical titles leave
+    // "step 14 of 22" as the only thing telling two rows apart, so repeats say
+    // which one they are.
+    {
+      const counts = new Map<string, number>();
+      for (const st of steps) counts.set(st.title, (counts.get(st.title) ?? 0) + 1);
+      const seen = new Map<string, number>();
+      for (const st of steps) {
+        const total = counts.get(st.title) ?? 1;
+        if (total < 2) continue;
+        const n = (seen.get(st.title) ?? 0) + 1;
+        seen.set(st.title, n);
+        st.title = `${st.title} ${n} of ${total}`;
       }
     }
 
@@ -361,12 +401,13 @@ export function prepareShortest(): void {
 
 /** Slow: the near-optimal search. Call this when the user asks for it. */
 export function buildShortest(state: CubeState): PlanMethod {
+  const forCube = cubeKey(state);
   try {
     const cube = stateToCubie(state);
     if (isCubieSolved(cube)) {
       return {
         id: 'shortest', title: 'Shortest solve', subtitle: 'Already solved.',
-        level: 9, steps: [], totalMoves: 0,
+        level: 9, steps: [], totalMoves: 0, forCube,
       };
     }
     const solution = movesToNotation(
@@ -394,6 +435,7 @@ export function buildShortest(state: CubeState): PlanMethod {
         },
       ],
       totalMoves: moves.length,
+      forCube,
     };
   } catch (err) {
     return {
@@ -403,15 +445,38 @@ export function buildShortest(state: CubeState): PlanMethod {
       level: 9,
       steps: [],
       totalMoves: 0,
+      forCube,
+      failed: true,
     };
   }
+}
+
+/**
+ * The cached search result, but only while it still describes this cube.
+ *
+ * Round 1 replaced an over-eager invalidation with none at all, so a solve
+ * computed before a step was played survived it - displayed, and tappable, and
+ * wrong. Relabelling the cube after a drag rewrites the moves and re-stamps the
+ * method, so that path keeps its result; anything that really changes the cube
+ * fails the stamp and the offer to compute one comes back.
+ */
+export function currentShortest(
+  cached: PlanMethod | null,
+  state: CubeState
+): PlanMethod | null {
+  if (!cached) return null;
+  return cached.forCube === cubeKey(state) ? cached : null;
 }
 
 /**
  * A cached method rewritten for the cube's new labels after a drag. Returns
  * null when the moves cannot be rewritten, so the caller recomputes instead.
  */
-export function relabelMethod(method: PlanMethod, rot: CubeRotation): PlanMethod | null {
+export function relabelMethod(
+  method: PlanMethod,
+  rot: CubeRotation,
+  relabelled: CubeState
+): PlanMethod | null {
   const steps: PlanStep[] = [];
   for (const step of method.steps) {
     const moves = relabelMoves(rot, step.moves);
@@ -419,7 +484,47 @@ export function relabelMethod(method: PlanMethod, rot: CubeRotation): PlanMethod
     if (!moves || !prelude) return null;
     steps.push({ ...step, moves, prelude, notation: formatAlg(moves) });
   }
-  return { ...method, steps };
+  // The cube is the same cube, held differently: re-stamp so it still matches.
+  return { ...method, steps, forCube: cubeKey(relabelled) };
+}
+
+/**
+ * Where a step sits in the method's stages, rather than in a flat list.
+ *
+ * "Step 14 of 22" tells a learner how much is left; "First layer corners, 3 of
+ * 4" tells them what they are doing and how far through that idea they are,
+ * which is the thing the app is trying to teach.
+ */
+export interface StageProgress {
+  group: string;
+  /** 1-based position within the stage, and the stage's length. */
+  step: number;
+  steps: number;
+  /** 1-based position of the stage within the method, and how many there are. */
+  stage: number;
+  stages: number;
+}
+
+export function stageProgress(
+  plan: SolvePlan | null,
+  stepId: string | null
+): StageProgress | null {
+  if (!plan?.ok || !stepId) return null;
+  for (const method of plan.methods) {
+    const current = method.steps.find((s) => s.id === stepId);
+    if (!current) continue;
+    const groups: string[] = [];
+    for (const s of method.steps) if (!groups.includes(s.group)) groups.push(s.group);
+    const inGroup = method.steps.filter((s) => s.group === current.group);
+    return {
+      group: current.group,
+      step: inGroup.findIndex((s) => s.id === stepId) + 1,
+      steps: inGroup.length,
+      stage: groups.indexOf(current.group) + 1,
+      stages: groups.length,
+    };
+  }
+  return null;
 }
 
 /** Human-readable summary of an illegal painted cube. */

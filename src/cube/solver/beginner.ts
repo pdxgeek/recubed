@@ -374,7 +374,7 @@ function solveMiddleLayer(cube: CubieCube): { cube: CubieCube; stage: SolveStage
     const from = ejecting ? EDGE_POSITION[target] : EDGE_POSITION[findEdge(current, target)];
     current = chosen.next;
     steps.push({
-      title: '',
+      title: ejecting ? 'Free the slot' : '',
       focus: [from],
       destination: ejecting ? undefined : EDGE_POSITION[target],
       detail: ejecting
@@ -404,6 +404,8 @@ function lastLayerStage(
   title: string,
   goal: string,
   detail: string,
+  /** What one application of this stage's algorithm does, in plain words. */
+  action: string,
   vocabulary: NamedAlg[],
   test: (c: CubieCube) => boolean,
   maxApplications: number,
@@ -415,7 +417,9 @@ function lastLayerStage(
   const steps: SolveStep[] = chain.map((entry) => {
     current = applyAlgCubie(current, entry.alg);
     return {
-      title: entry.name,
+      // A human sentence, not the algorithm's name: the name goes on the tag
+      // beside it, and a row that says "Sune" twice says nothing twice.
+      title: action,
       detail,
       algorithm: entry.name,
       moves: parseAlg(entry.alg),
@@ -461,6 +465,7 @@ export function solveBeginner(cube: CubieCube): SolveStage[] {
       current, 'top-cross', 'Last layer cross',
       'A cross of the last colour on the top face, side colours ignored for now.',
       'Hold the shape you have at the back-left and run the algorithm. A dot becomes an L, an L becomes a line, a line becomes the cross.',
+      'Grow the yellow cross',
       YELLOW_CROSS, topEdgesOriented, 3
     )
   );
@@ -469,6 +474,7 @@ export function solveBeginner(cube: CubieCube): SolveStage[] {
       current, 'top-corners-orient', 'Turn the last corners the right way up',
       'The whole top face showing one colour.',
       'Hold the cube so the corners match the case and run Sune. Repeat until the top face is solid.',
+      'Turn the top corners over',
       ORIENT_CORNERS, topCornersOriented, 4
     )
   );
@@ -477,6 +483,7 @@ export function solveBeginner(cube: CubieCube): SolveStage[] {
       current, 'top-corners-place', 'Move the last corners home',
       'Every corner in its own spot, even if the edges are still wrong.',
       'Find a corner already home, hold it at the front-right, and cycle the other three.',
+      'Send the corners home',
       PERMUTE_CORNERS, topCornersPlaced, 3
     )
   );
@@ -485,6 +492,7 @@ export function solveBeginner(cube: CubieCube): SolveStage[] {
       current, 'top-edges-place', 'Move the last edges home',
       'The last four edges into place - and the cube is done.',
       'Hold the edge that is already correct at the back and cycle the other three round.',
+      'Send the edges home',
       PERMUTE_EDGES, isCubieSolved, 3, true
     )
   );

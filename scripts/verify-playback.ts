@@ -8,7 +8,20 @@
  * preludeB` and demonstrated the algorithm on a cube it does not apply to.
  */
 import { CubeState, applyAlg, solvedState } from '../src/cube/core';
-import { atEnd, atStart, back, commit, forward, restart, startStep, stepStartState } from '../src/cube/run';
+import {
+  Playback,
+  atEnd,
+  atStart,
+  back,
+  close,
+  forward,
+  nextMove,
+  prevMove,
+  restart,
+  selectStep,
+  startStep,
+  stepStartState,
+} from '../src/cube/run';
 import { PlanStep, buildPlan } from '../src/cube/solver/plan';
 
 let fails = 0;
@@ -56,28 +69,33 @@ check('the test has a plan to work with', steps.length > 6, `${steps.length} ste
   for (const step of steps) {
     const p = startStep(origin, step);
     if (!sameColors(p.live, applyAlg(origin, step.prelude))) bad++;
+    if (p.step !== step) bad++;
     if (!p.base.home.every((h, i) => h === i)) bad++; // tracking restarts here
   }
   check('every step begins at origin + its own prelude', bad === 0, `${bad} of ${steps.length}`);
 }
 
 // -- 2. picking a second step mid-run ----------------------------------------
+//
+// The round-1 blocker. A step's prelude is absolute, so the second step has to
+// be measured from the cube the plan describes. `selectStep` reads that out of
+// the open session, so a caller cannot supply the wrong cube - which is the
+// mistake that caused the bug and the one a test has to be able to catch.
 {
   const a = steps[2];
   const b = steps[5];
-  let p = startStep(origin, a);
+  let p: Playback | null = selectStep(null, origin, a);
   for (let i = 0; i < 3 && !atEnd(p); i++) p = forward(p);
 
-  // The fix: the second step is measured from the origin the plan describes,
-  // not from where the first step happened to leave the cube.
-  const second = startStep(p.origin, b);
-  check('picking a second step without closing the first starts from the right cube',
+  const second = selectStep(p, /* deliberately wrong */ p.live, b);
+  check('a second step is measured from the plan origin, not from the open step',
     sameColors(second.live, applyAlg(origin, b.prelude)));
+  check('and the fallback origin is ignored entirely while a session is open',
+    second.origin === p.origin);
 
-  // The shape of the old bug, spelled out so it cannot creep back: measuring
-  // from the previous step's base stacks the two preludes.
+  // The shape of the old bug, spelled out so it cannot creep back.
   const stacked = stepStartState(p.base, b);
-  check('and that is genuinely different from stacking the preludes',
+  check('stacking the two preludes really would give a different cube',
     !sameColors(stacked, second.live) || b.prelude.length === 0);
 
   // Playing the second step through must reach the position the plan intends.
@@ -85,6 +103,16 @@ check('the test has a plan to work with', steps.length > 6, `${steps.length} ste
   while (!atEnd(q)) q = forward(q);
   check('playing it through lands where the plan says it should',
     sameColors(q.live, applyAlg(origin, [...b.prelude, ...b.moves])));
+
+  // Round-trip: A -> B -> A must land on A's start again, byte for byte.
+  const backToA = selectStep(q, q.live, a);
+  check('going back to the first step lands on exactly its own starting cube',
+    same(backToA.live, selectStep(null, origin, a).live));
+
+  // With no session open the fallback is what is used.
+  const fresh = selectStep(null, origin, b);
+  check('with nothing open, the fallback origin is the origin',
+    sameColors(fresh.live, applyAlg(origin, b.prelude)));
 }
 
 // -- 3. forward and back are exact inverses ----------------------------------
@@ -107,27 +135,37 @@ check('the test has a plan to work with', steps.length > 6, `${steps.length} ste
 // -- 4. restart, and the guards at either end --------------------------------
 {
   let p = startStep(origin, steps[3]);
+  check('a fresh step reports the move it is about to play', nextMove(p) === steps[3].moves[0]);
+  check('and has nothing to undo yet', prevMove(p) === null);
   while (!atEnd(p)) p = forward(p);
   const done = p;
+  check('at the end there is no next move', nextMove(done) === null);
   p = restart(p);
-  check('restart returns to the step\'s start, tracking and all', same(p.live, p.base) && atStart(p));
+  check("restart returns to the step's start, tracking and all", same(p.live, p.base) && atStart(p));
   check('back at the start is a no-op', back(p) === p);
   check('forward at the end is a no-op', forward(done) === done);
   check('a step that has run to the end reports it', atEnd(done) && !atStart(done));
 }
 
-// -- 5. committing a finished step moves the origin on ------------------------
+// -- 5. closing a step: commit keeps the moves, a preview puts them back ------
 {
   const first = steps[1];
   let p = startStep(origin, first);
   while (!atEnd(p)) p = forward(p);
-  const nextOrigin = commit(p);
-  const rebuilt = planSteps(nextOrigin);
-  check('the cube a finished step leaves behind is a legal cube with a plan of its own',
+  const kept = close(p);
+  check('a committed step leaves the cube where it finished', same(kept, p.live));
+
+  let preview = startStep(origin, first, false);
+  while (!atEnd(preview)) preview = forward(preview);
+  check('an uncommitted step puts the cube back where it started',
+    same(close(preview), preview.base));
+
+  const rebuilt = planSteps(kept);
+  check('the cube a finished step leaves behind is legal and has a plan of its own',
     rebuilt.length > 0, `${rebuilt.length} steps`);
-  const after = startStep(nextOrigin, rebuilt[0]);
+  const after = startStep(kept, rebuilt[0]);
   check('and the next step measured from it starts where it says it does',
-    sameColors(after.live, applyAlg(nextOrigin, rebuilt[0].prelude)));
+    sameColors(after.live, applyAlg(kept, rebuilt[0].prelude)));
 }
 
 console.log(fails ? `\n${fails} playback check(s) failed` : '\nall playback checks passed');
