@@ -260,6 +260,70 @@ try {
   {
     await page.click('[aria-label="Flat net view"]');
     await sleep(1400);
+
+    // 4a. every one of the 54 cells is on screen, on every phone.
+    //
+    // Measured against the net's own clip region, not against the window. A
+    // cell scrolled out of a ScrollView still reports a rect inside the window,
+    // which is how round 3 came to claim "54 of 54 visible at 390" while 12 of
+    // them were below the fold - and 30 of them on an SE. `src/ui/net.ts` has
+    // the arithmetic (netBand / netFits); this is the DOM agreeing with it.
+    for (const [w, h] of [
+      [375, 667],
+      [390, 844],
+      [430, 932],
+    ]) {
+      await page.setViewportSize({ width: w, height: h });
+      await sleep(1200);
+      const fit = await page.evaluate(() => {
+        const cells = [...document.querySelectorAll('[role="button"]')].filter((n) =>
+          / face, (row|centre)/.test(n.getAttribute('aria-label') ?? '')
+        );
+        const list = cells[0]?.closest('[role="list"]');
+        if (!list) return null;
+        let clip = list.parentElement;
+        while (clip && getComputedStyle(clip).overflowY === 'visible') clip = clip.parentElement;
+        const c = clip.getBoundingClientRect();
+        const inside = cells.filter((n) => {
+          const r = n.getBoundingClientRect();
+          return (
+            r.top >= c.top - 0.5 &&
+            r.bottom <= c.bottom + 0.5 &&
+            r.left >= c.left - 0.5 &&
+            r.right <= c.right + 0.5
+          );
+        }).length;
+        return {
+          total: cells.length,
+          inside,
+          overflow: clip.scrollHeight - clip.clientHeight,
+          band: Math.round(c.height),
+          // Whatever sits above and below the net, whatever draws it.
+          above: Math.round(c.top),
+          below: Math.round(window.innerHeight - c.bottom),
+        };
+      });
+      check(
+        `${w}x${h}: all 54 net cells are inside the net's own viewport`,
+        fit && fit.total === 54 && fit.inside === 54,
+        JSON.stringify(fit)
+      );
+      check(
+        `${w}x${h}: and the net has nothing to scroll`,
+        fit && fit.overflow <= 0,
+        `${fit?.overflow}pt of overflow in a ${fit?.band}pt band`
+      );
+      // The furniture src/ui/net.ts budgets for: TOP_BAR_H 67 above, and
+      // PAINT_ROW_H + PANEL_RULE = 113 below. If either drifts the arithmetic
+      // in net.ts goes on saying the net fits while the DOM disagrees.
+      check(
+        `${w}x${h}: the furniture net.ts budgets for is the furniture drawn (67 / 113)`,
+        fit && fit.above === 67 && fit.below === 113,
+        `${fit?.above} above, ${fit?.below} below`
+      );
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sleep(1200);
     const net = await page.evaluate(() => {
       const cells = [...document.querySelectorAll('[role="button"]')].filter((n) =>
         / face, (row|centre)/.test(n.getAttribute('aria-label') ?? '')

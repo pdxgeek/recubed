@@ -9,6 +9,7 @@ import {
   FACE_SIZE,
   FACE_WORD,
   LABEL_H,
+  NET_PAD,
   NET_ROWS,
   NetLayout,
   layoutFor,
@@ -132,14 +133,20 @@ export function CubeNet({
     );
   };
 
+  // The label sits directly on the grid and the grid owns the gaps between its
+  // rows, so a face block is exactly LABEL_H + FACE_SIZE - the number `net.ts`
+  // budgets with. A gap here, or a margin under the last row, is 48pt of net
+  // that no measurement in the app knows about.
   const faceBlock = (face: Face) => (
     <View key={face} style={styles.face}>
       <Text style={styles.faceLabel}>{FACE_WORD[face].toUpperCase()}</Text>
-      {[0, 1, 2].map((row) => (
-        <View key={row} style={styles.faceRow}>
-          {[0, 1, 2].map((col) => cell(face, row, col))}
-        </View>
-      ))}
+      <View style={styles.faceGrid}>
+        {[0, 1, 2].map((row) => (
+          <View key={row} style={styles.faceRow}>
+            {[0, 1, 2].map((col) => cell(face, row, col))}
+          </View>
+        ))}
+      </View>
     </View>
   );
 
@@ -149,7 +156,7 @@ export function CubeNet({
           phone, so no face is ever split across the horizontal axis and there
           is no sideways scroll to discover. */}
       <ScrollView contentContainerStyle={styles.vertical}>
-        <View accessibilityRole="list" accessibilityLabel="Cube net, 54 stickers">
+        <View style={styles.rows} accessibilityRole="list" accessibilityLabel="Cube net, 54 stickers">
           {NET_ROWS[layout].map((row, i) => (
             <View key={i} style={styles.netRow}>
               {row.map((face, j) =>
@@ -168,17 +175,20 @@ export function CubeNet({
   );
 }
 
-const { surface, line, text, cube, space, type, radius } = tokens;
+const { surface, line, text, cube, type, radius } = tokens;
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
-  vertical: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: space.md },
-  netRow: { flexDirection: 'row', gap: FACE_GAP, marginBottom: FACE_GAP },
+  vertical: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', padding: NET_PAD },
+  rows: { gap: FACE_GAP },
+  netRow: { flexDirection: 'row', gap: FACE_GAP },
   spacer: { width: FACE_SIZE },
-  face: { width: FACE_SIZE, gap: CELL_GAP },
+  face: { width: FACE_SIZE },
+  faceGrid: { gap: CELL_GAP },
   faceLabel: {
     ...type.overline,
     height: LABEL_H,
+    lineHeight: LABEL_H,
     color: text.tertiary,
     textAlign: 'center',
   },

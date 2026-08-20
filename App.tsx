@@ -68,6 +68,7 @@ import { SolvePanel } from './src/components/SolvePanel';
 import { StepBar } from './src/components/StepBar';
 import { MoveStrip } from './src/components/MoveStrip';
 import { WhySheet } from './src/components/WhySheet';
+import { TOP_BAR_H, netBlockHeight } from './src/ui/net';
 import { tokens } from './src/ui/theme';
 
 /**
@@ -137,6 +138,17 @@ export default function App() {
   const [computing, setComputing] = useState(false);
 
   // -- derived -------------------------------------------------------------
+
+  /**
+   * In Flat view the net *is* the cube, so it gets the body and the panel is
+   * sized from what is left rather than from a share of the window. The paint
+   * panel collapses to two 44pt rows (`variant="compact"`); the step list has no
+   * compact form, so it takes the smaller of its usual height and what the net
+   * can spare, never going below a usable 200.
+   */
+  const flat = !wide && view === 'net';
+  const flatPaint = flat && mode === 'paint';
+  const netRoom = height - TOP_BAR_H - netBlockHeight();
 
   const pair = useMemo(() => selectionPair(state, selection), [state, selection]);
   const selectionSlots = useMemo(() => slotsOfSelection(state, selection), [state, selection]);
@@ -466,6 +478,7 @@ export default function App() {
         onClear={() => setCubeState(blankState())}
         onSolveThis={() => onModeChange('solve')}
         nudge={paintNudge}
+        variant={flatPaint ? 'compact' : 'full'}
       />
     ) : (
       <SolvePanel
@@ -574,7 +587,14 @@ export default function App() {
                     ? short
                       ? { minHeight: 140, maxHeight: 140 }
                       : { minHeight: Math.min(200, sheetMin), maxHeight: '38%' as const }
-                    : { minHeight: sheetMin },
+                    : flatPaint
+                      ? styles.panelCompact
+                      : flat
+                        ? {
+                            minHeight: Math.max(200, Math.min(sheetMin, netRoom)),
+                            maxHeight: Math.max(200, Math.min(sheetMin, netRoom)),
+                          }
+                        : { minHeight: sheetMin },
                 ],
           ]}
         >
@@ -689,6 +709,8 @@ const styles = StyleSheet.create({
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: line.hairline,
   },
+  // The compact paint row measures itself; the panel must not stretch it.
+  panelCompact: { flexGrow: 0, flexShrink: 0 },
   panelBottom: {
     maxHeight: '56%',
     borderTopWidth: StyleSheet.hairlineWidth,

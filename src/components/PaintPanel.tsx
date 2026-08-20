@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLOR_HEX, COLOR_IDS, COLOR_NAME, ColorId, CubeState, SLOTS, isCenter } from '../cube/core';
+import { PAINT_ROW_H } from '../ui/net';
 import { inkOn, tokens } from '../ui/theme';
 
 interface Props {
@@ -14,6 +15,14 @@ interface Props {
   onSolveThis: () => void;
   /** Just-in-time feedback, e.g. after a tap on a centre. Cleared by the shell. */
   nudge?: string | null;
+  /**
+   * `compact` is the Flat-view form: two 44pt rows and nothing else, so the net
+   * gets the whole body. The full panel is 336pt, which left a 264pt band for a
+   * 462pt net on an SE - roughly half the cube at a time, and no measurement in
+   * the app said so. Every control here keeps the label it has in the full
+   * panel, so nothing a screen reader or a test knows about moves.
+   */
+  variant?: 'full' | 'compact';
 }
 
 /** 48 of the 54 stickers are paintable; the six centres are fixed. */
@@ -43,6 +52,7 @@ export function PaintPanel({
   onClear,
   onSolveThis,
   nudge,
+  variant = 'full',
 }: Props) {
   const { counts, blank, painted } = tally(state);
   const complete = painted === PAINTABLE.length;
@@ -55,6 +65,116 @@ export function PaintPanel({
     const id = setTimeout(() => setArmed(false), 3000);
     return () => clearTimeout(id);
   }, [armed]);
+
+  // The full panel stacks a large "Solve this cube →" primary above this row;
+  // the compact one has no room for a second row, so the primary joins the row
+  // itself. Only ever one of the two, so "Solve this cube" is one control.
+  const actionRow = (withPrimary: boolean) => (
+    <View style={styles.actions}>
+      {withPrimary && complete && (
+        <Pressable
+          onPress={onSolveThis}
+          style={[styles.action, styles.actionPrimary]}
+          accessibilityRole="button"
+          accessibilityLabel="Solve this cube"
+        >
+          <Text style={[styles.actionText, styles.actionTextPrimary]}>Solve →</Text>
+        </Pressable>
+      )}
+      <Pressable
+        onPress={onFillSolved}
+        style={styles.action}
+        accessibilityRole="button"
+        accessibilityLabel="Fill in a solved cube"
+      >
+        <Text style={styles.actionText}>Solved</Text>
+      </Pressable>
+      <Pressable
+        onPress={onScramble}
+        style={styles.action}
+        accessibilityRole="button"
+        accessibilityLabel="Fill in a random scramble"
+      >
+        <Text style={styles.actionText}>Scramble</Text>
+      </Pressable>
+      <Pressable
+        onPress={() => {
+          if (armed) {
+            setArmed(false);
+            onClear();
+          } else setArmed(true);
+        }}
+        style={[styles.action, armed && styles.actionArmed]}
+        accessibilityRole="button"
+        accessibilityLabel={armed ? 'Tap again to clear every sticker' : 'Clear every sticker'}
+      >
+        <Text style={[styles.actionText, armed && styles.actionTextArmed]}>
+          {armed ? 'Sure?' : 'Start over'}
+        </Text>
+      </Pressable>
+    </View>
+  );
+
+  if (variant === 'compact') {
+    return (
+      <View style={styles.compact}>
+        <View
+          style={styles.swatchRow}
+          accessibilityRole="radiogroup"
+          accessibilityLabel="Sticker colour"
+        >
+          <Pressable
+            onPress={() => onActive(null)}
+            style={[styles.swatch, styles.swatchErase, active === null && styles.swatchOn]}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: active === null }}
+            aria-checked={active === null}
+            accessibilityLabel={`Erase, ${blank} stickers blank`}
+          >
+            <Text style={styles.swatchEraseLetter} maxFontSizeMultiplier={1.3}>
+              ⌫
+            </Text>
+          </Pressable>
+          {COLOR_IDS.map((c) => {
+            const n = counts[c];
+            const on = active === c;
+            const tooMany = n > 9;
+            return (
+              <Pressable
+                key={c}
+                onPress={() => onActive(c)}
+                style={[
+                  styles.swatch,
+                  { backgroundColor: COLOR_HEX[c] },
+                  on && styles.swatchOn,
+                  tooMany && styles.swatchBad,
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                aria-checked={on}
+                accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
+                accessibilityHint="Then tap stickers on the net"
+              >
+                <Text
+                  style={[styles.swatchLetter, { color: inkOn(COLOR_HEX[c]) }]}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {c}
+                </Text>
+                <Text
+                  style={[styles.swatchCount, { color: inkOn(COLOR_HEX[c]) }]}
+                  maxFontSizeMultiplier={1.2}
+                >
+                  {n}/9
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        {actionRow(true)}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.wrap}>
@@ -159,39 +279,7 @@ export function PaintPanel({
             <Text style={styles.primaryText}>Solve this cube →</Text>
           </Pressable>
         )}
-        <View style={styles.actions}>
-          <Pressable
-            onPress={onFillSolved}
-            style={styles.action}
-            accessibilityRole="button"
-            accessibilityLabel="Fill in a solved cube"
-          >
-            <Text style={styles.actionText}>Solved</Text>
-          </Pressable>
-          <Pressable
-            onPress={onScramble}
-            style={styles.action}
-            accessibilityRole="button"
-            accessibilityLabel="Fill in a random scramble"
-          >
-            <Text style={styles.actionText}>Scramble</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              if (armed) {
-                setArmed(false);
-                onClear();
-              } else setArmed(true);
-            }}
-            style={[styles.action, armed && styles.actionArmed]}
-            accessibilityRole="button"
-            accessibilityLabel={armed ? 'Tap again to clear every sticker' : 'Clear every sticker'}
-          >
-            <Text style={[styles.actionText, armed && styles.actionTextArmed]}>
-              {armed ? 'Sure?' : 'Start over'}
-            </Text>
-          </Pressable>
-        </View>
+        {actionRow(false)}
       </View>
     </View>
   );
@@ -275,6 +363,40 @@ const styles = StyleSheet.create({
 
   foot: { gap: space.sm },
   actions: { flexDirection: 'row', gap: space.sm },
+
+  // -- the Flat-view form ---------------------------------------------------
+  // A fixed height, because the net's budget is computed from it: `net.ts`
+  // owns PAINT_ROW_H and `verify-net.ts` checks the net fits what is left.
+  compact: {
+    height: PAINT_ROW_H,
+    paddingHorizontal: space.gutter,
+    paddingVertical: space.sm,
+    gap: space.sm,
+    justifyContent: 'center',
+  },
+  swatchRow: { flexDirection: 'row', gap: space.xs },
+  swatch: {
+    flex: 1,
+    height: hit.min,
+    borderRadius: radius.sm,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swatchOn: { borderColor: accent.base, borderWidth: 3 },
+  swatchBad: { borderColor: status.danger },
+  swatchErase: {
+    backgroundColor: cube.blank,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: line.outline,
+  },
+  swatchEraseLetter: { ...type.body, color: text.secondary },
+  swatchLetter: { fontSize: 14, lineHeight: 16, fontWeight: '700' },
+  swatchCount: { fontSize: 10, lineHeight: 12, fontWeight: '700' },
+  actionPrimary: { borderWidth: 2, borderColor: accent.base, backgroundColor: accent.soft },
+  actionTextPrimary: { color: text.primary },
   action: {
     flex: 1,
     minHeight: hit.min,
