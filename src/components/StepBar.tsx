@@ -22,7 +22,13 @@ interface Props {
   onPrev: () => void;
   /** Null while practising: the moves ahead are covered, so Next would spoil it. */
   onNext: (() => void) | null;
-  onPlayPause: () => void;
+  /**
+   * Null while practising, for the same reason as `onNext` and a worse one: one
+   * tap on Play auto-played the whole step and spoiled every move in it, so the
+   * "you cannot spoil it" rule had a hole big enough to drive the feature
+   * through. Reveal, in the strip's own footer, is the way forward.
+   */
+  onPlayPause: (() => void) | null;
   onRestart: () => void;
   onSpeed: (ms: number) => void;
   closeLabel?: string;
@@ -97,10 +103,14 @@ export function StepBar({
         </Pressable>
 
         <Pressable
-          onPress={onPlayPause}
-          style={[styles.icon, styles.play]}
+          onPress={onPlayPause ?? undefined}
+          disabled={!onPlayPause}
+          style={[styles.icon, styles.play, !onPlayPause && styles.iconOff]}
           accessibilityRole="button"
           accessibilityLabel={playing ? 'Pause' : atEnd ? 'Replay' : 'Play'}
+          accessibilityState={{ disabled: !onPlayPause }}
+          aria-disabled={!onPlayPause}
+          accessibilityHint={onPlayPause ? undefined : 'Reveal the moves one at a time instead'}
         >
           <Text style={[styles.iconText, styles.playText]}>{playing ? '‖' : '▶'}</Text>
         </Pressable>

@@ -1,8 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { CubeState, SLOTS, vecKey } from '../cube/core';
-import { ALGORITHMS } from '../cube/algorithms';
-import { PlanStep, describeCubie } from '../cube/solver/plan';
+import { PlanStep, algorithmForStep, piecesToWatch } from '../cube/solver/plan';
 import { Notation } from './Notation';
 import { tokens } from '../ui/theme';
 
@@ -14,46 +12,38 @@ import { tokens } from '../ui/theme';
  * list nothing: it slides over the panel, the list is exactly where it was when
  * it closes.
  *
- * Everything here is read off data the plan already carries. There is no new
- * cube maths and nothing for `npm run verify` to re-check: the algorithm's
- * note comes from the library, the pieces to watch come from the step's own
- * target slots named through `describeCubie`.
+ * Everything here is read off data the plan already carries, and every bit of
+ * it is checked by `verify-plan.ts`: `algorithmForStep` joins the step to the
+ * library by id (matching by name resolved 8 of 15 and left this sheet empty on
+ * the rest), and `piecesToWatch` names the pieces by colour out of the step's
+ * own `pieceKeys`. The list used to ask what was standing in the step's target
+ * *slots*, which the step's own moves then changed - so the piece a step is
+ * named after dropped off the list that told the learner to watch it.
  */
 
 interface Props {
   step: PlanStep;
-  state: CubeState;
   wireframe: boolean;
   onWireframe: (v: boolean) => void;
   onWatch: () => void;
   onClose: () => void;
 }
 
-export function WhySheet({ step, state, wireframe, onWireframe, onWatch, onClose }: Props) {
-  // Step names carry the face a trigger is performed on ("Sexy move (left)"),
-  // so an exact match misses the library entry it is a variant of.
-  const alg = useMemo(() => {
-    const name = step.algorithm;
-    if (!name) return undefined;
-    return (
-      ALGORITHMS.find((a) => a.name === name) ??
-      ALGORITHMS.find((a) => name.startsWith(`${a.name} (`))
-    );
-  }, [step.algorithm]);
+export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Props) {
+  const alg = useMemo(() => algorithmForStep(step), [step]);
+  const watching = useMemo(() => piecesToWatch(step), [step]);
 
-  /** The pieces this step moves, named the way the panel names them. */
-  const watching = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const i of step.targetSlots) {
-      const key = vecKey(SLOTS[i].pos);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const name = describeCubie(state, SLOTS[i].pos);
-      if (!name.startsWith('?') && !name.endsWith('centre')) out.push(name);
-    }
-    return out;
-  }, [step.targetSlots, state]);
+  /**
+   * Belt and braces for Dynamic Type: the sheet is sized to hold every variant
+   * at every supported size, but a reader at 200% can still overrun it. A
+   * scrollbar is not an answer - it is not drawn at rest on either platform,
+   * which is how the explanatory footnote came to be cut with nothing to say so.
+   * A chip that is visible at rest is.
+   */
+  const [content, setContent] = useState(0);
+  const [viewport, setViewport] = useState(0);
+  const scroller = React.useRef<ScrollView>(null);
+  const overflows = content > viewport + 1;
 
   return (
     <View style={styles.sheet} accessibilityViewIsModal accessibilityRole="alert">
@@ -71,26 +61,29 @@ export function WhySheet({ step, state, wireframe, onWireframe, onWatch, onClose
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView
+        ref={scroller}
+        style={styles.scroll}
+        contentContainerStyle={styles.body}
+        onLayout={(e) => setViewport(e.nativeEvent.layout.height)}
+        onContentSizeChange={(_w, h) => setContent(h)}
+      >
         <Notation moves={step.moves} variant="blocks" rawBelow={4} />
 
         <Text style={styles.overline}>What it does</Text>
-        {alg?.note && (
-          <Text style={styles.para}>
-            {alg.note}. Everything else on the cube ends up exactly where it started.
-          </Text>
-        )}
+        {alg?.note && <Text style={styles.para}>{alg.note}</Text>}
         <Text style={styles.para}>{step.detail}</Text>
 
         {watching.length > 0 && (
           <>
             <Text style={styles.overline}>Watch these</Text>
-            {watching.map((name) => (
-              <View key={name} style={styles.watchRow}>
-                <View style={styles.watchDot} />
-                <Text style={styles.watchText}>{name}</Text>
-              </View>
-            ))}
+            {/* One wrapped line, not one row per piece. A T perm moves six, and
+                six 22pt rows were 132pt of the sheet - which is most of what
+                pushed the footnote below the fold on an SE. */}
+            <View style={styles.watchRow}>
+              <View style={styles.watchDot} />
+              <Text style={styles.watchText}>{watching.join('  ·  ')}</Text>
+            </View>
           </>
         )}
 
@@ -102,6 +95,19 @@ export function WhySheet({ step, state, wireframe, onWireframe, onWatch, onClose
           </Text>
         )}
       </ScrollView>
+
+      {overflows && (
+        <Pressable
+          onPress={() => scroller.current?.scrollToEnd({ animated: true })}
+          style={styles.more}
+          accessibilityHint="There is more below"
+
+          accessibilityRole="button"
+          accessibilityLabel="Scroll for more"
+        >
+          <Text style={styles.moreText}>⌄ more</Text>
+        </Pressable>
+      )}
 
       <View style={styles.actions}>
         <Pressable
@@ -130,8 +136,11 @@ export function WhySheet({ step, state, wireframe, onWireframe, onWatch, onClose
 const { surface, line, text, accent, cube, space, type, radius, elevation, hit } = tokens;
 
 const styles = StyleSheet.create({
+  // Sized to its content, capped at the body by the holder. A sheet with a
+  // fixed height either cuts a long explanation off or covers the cube for a
+  // short one - and the cube is what "Watch these" is pointing at.
   sheet: {
-    flex: 1,
+    flexShrink: 1,
     backgroundColor: surface.base,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
@@ -148,12 +157,30 @@ const styles = StyleSheet.create({
   back: { minHeight: hit.min, justifyContent: 'center', paddingRight: space.sm },
   backText: { ...type.heading, color: accent.base },
   title: { ...type.heading, color: text.primary, flex: 1, textAlign: 'right' },
-  body: { padding: space.gutter, paddingBottom: space.xl, gap: space.sm },
+  scroll: { flexShrink: 1 },
+  body: { padding: space.gutter, paddingBottom: space.sm, gap: 6 },
+  // Over the content, not above it: a chip that took 44pt of layout made the
+  // overflow it warns about 44pt worse.
+  more: {
+    position: 'absolute',
+    right: space.gutter,
+    bottom: 60,
+    minHeight: hit.min,
+    minWidth: hit.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: accent.base,
+    backgroundColor: surface.raised,
+  },
+  moreText: { ...type.overline, color: accent.base },
   overline: { ...type.overline, color: text.tertiary, marginTop: space.sm },
   para: { ...type.caption, color: text.secondary },
-  watchRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 22 },
-  watchDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: cube.moving },
-  watchText: { ...type.caption, color: text.secondary },
+  watchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
+  watchDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4, backgroundColor: cube.moving },
+  watchText: { ...type.caption, color: text.secondary, flex: 1 },
   footnote: { ...type.caption, color: text.tertiary, marginTop: space.sm },
   actions: {
     flexDirection: 'row',

@@ -496,6 +496,217 @@ try {
     await sleep(1200);
   }
 
+  // -- 7b. the teaching surfaces --------------------------------------------
+  //
+  // Every one of these was a real defect found in round 4: the explanation was
+  // reachable only from the step already playing, the playing step stopped
+  // being named, its affordance was the one sub-44pt control in the app, the
+  // sheet cut off the sentence it exists to say, and Play spoiled practise mode
+  // in one tap.
+  {
+    const rows = page.locator('[role="button"][aria-label*=" moves"]');
+    const nRows = await rows.count();
+    const nWhy = await page.locator('[role="button"][aria-label^="Why "]').count();
+    check(
+      'every step row offers its explanation, not only the running one',
+      nRows > 0 && nWhy === nRows,
+      `${nWhy} explanations for ${nRows} rows`
+    );
+
+    // The invariant, stated once and enforced everywhere below.
+    const census = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('[tabindex],button,[role]')]
+          .filter((n) => n.offsetParent !== null && n.getAttribute('role') !== 'list')
+          .filter((n) => n.getAttribute('focusable') !== 'n')
+          .filter((n) => !/ face, (row|centre)/.test(n.getAttribute('aria-label') ?? ''))
+          .map((n) => {
+            const r = n.getBoundingClientRect();
+            return { label: n.getAttribute('aria-label'), h: Math.round(r.height), w: Math.round(r.width) };
+          })
+          .filter((c) => c.h < 44)
+      );
+
+    check('idle: nothing outside the net is under 44pt', (await census()).length === 0,
+      JSON.stringify(await census()));
+
+    // 7b.1 the explanation opens from a row that is not running.
+    let longest = 0;
+    let most = 0;
+    const labels = await rows.evaluateAll((ns) => ns.map((n) => n.getAttribute('aria-label') ?? ''));
+    labels.forEach((l, i) => {
+      const m = Number((l.match(/(\d+) moves/) ?? [])[1] ?? 0);
+      if (m > most) {
+        most = m;
+        longest = i;
+      }
+    });
+    // For the tag check below, prefer a step whose algorithm is also a chunk
+    // name - that is the shape the duplication bug lived in, and picking
+    // "whichever step happened to be longest" made it a coin toss.
+    const sexy = labels.findIndex((l) => /, Sexy move/.test(l));
+    const probe = sexy >= 0 ? sexy : longest;
+    const title = labels[probe].split(',')[0];
+    await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+    await sleep(1000);
+    const opened = await bodyText();
+    check(
+      'the explanation opens without committing to playback',
+      /What it does/.test(opened) && (await count('Watch it slowly')) === 1,
+      opened.slice(0, 120).replace(/\n/g, ' / ')
+    );
+    check('sheet open: nothing is under 44pt', (await census()).length === 0,
+      JSON.stringify(await census()));
+
+    // 7b.2 the sheet does not cut its own explanation off - for any step, on
+    // any phone. Round 4 cut the line "N corners and M edges move; the others
+    // do not" off the bottom of a scroller with no indicator at rest, which is
+    // the one sentence the sheet exists to say. Every variant is opened at 375,
+    // the tightest supported size, because a longer explanation clips worse.
+    const sheetFit = () =>
+      page.evaluate(() => {
+        const sheet = document.querySelector('[role="alert"]');
+        if (!sheet) return null;
+        const sc = [...sheet.querySelectorAll('*')].find((n) => n.scrollHeight > n.clientHeight + 1);
+        const body = sheet.innerText;
+        return {
+          overflow: sc ? sc.scrollHeight - sc.clientHeight : 0,
+          // The payload: "N corners and M edges move; the other K do not".
+          hasFootnote: /corners? and \d+ edges? move/.test(body),
+          hasNote: /What it does/.test(body),
+          more: !!document.querySelector('[aria-label="Scroll for more"]'),
+        };
+      });
+
+    await page.click('[aria-label="Back to the step list"]');
+    await sleep(600);
+    {
+      await page.setViewportSize({ width: 375, height: 667 });
+      await sleep(1000);
+      const whys = page.locator('[role="button"][aria-label^="Why "]');
+      const n = await whys.count();
+      let clipped = 0;
+      let silent = 0;
+      let noFootnote = 0;
+      let worst = '';
+      for (let i = 0; i < n; i++) {
+        await whys.nth(i).click();
+        await sleep(320);
+        const fit = await sheetFit();
+        if (!fit || fit.overflow > 0) {
+          clipped++;
+          if (!fit?.more) silent++;
+          if (!worst) worst = `${labels[i]} overflows by ${fit?.overflow}`;
+        }
+        // Only a step that names an algorithm has a library entry to count
+        // pieces from; "Put white on the bottom" is a setup turn, not one.
+        if (/ moves, /.test(labels[i]) && !fit?.hasFootnote) {
+          noFootnote++;
+          if (!worst) worst = `${labels[i]} has no footnote`;
+        }
+        await page.click('[aria-label="Back to the step list"]');
+        await sleep(200);
+      }
+      check(`375x667: none of the ${n} explanations is cut off`, clipped === 0, worst);
+      check('and if one ever were, a control at rest would say so', silent === 0, worst);
+      check(`375x667: every explanation of an algorithm says which pieces move`,
+        noFootnote === 0, worst);
+    }
+    for (const [w, h] of [
+      [390, 844],
+      [430, 932],
+    ]) {
+      await page.setViewportSize({ width: w, height: h });
+      await sleep(900);
+      await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+      await sleep(700);
+      const fit = await sheetFit();
+      check(
+        `${w}x${h}: the explanation of a ${most}-move step is whole`,
+        fit && fit.overflow <= 0 && fit.hasFootnote && fit.hasNote,
+        JSON.stringify(fit)
+      );
+      await page.click('[aria-label="Back to the step list"]');
+      await sleep(400);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sleep(900);
+
+    // 7b.2b the scrim is a real way out: the sheet takes the height it needs,
+    // so there is cube above it to tap.
+    await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+    await sleep(800);
+    await page.mouse.click(190, 100);
+    await sleep(700);
+    check(
+      'tapping the dimmed cube above the sheet closes it',
+      (await page.locator('[role="alert"]').count()) === 0
+    );
+
+    // 7b.3 the running row keeps its name, and does not print it twice.
+    await rows.nth(probe).click();
+    await sleep(1600);
+    const active = await page.evaluate(() => {
+      const on = [...document.querySelectorAll('[aria-selected="true"]')].find((n) =>
+        / moves/.test(n.getAttribute('aria-label') ?? '')
+      );
+      return on ? { label: on.getAttribute('aria-label'), text: on.innerText } : null;
+    });
+    check(
+      'the running step is still named in the list',
+      active && active.text.includes(title) && !/Running/.test(active.text),
+      JSON.stringify(active)
+    );
+    check(
+      'and the marker says it is running',
+      active && active.text.includes('▸'),
+      JSON.stringify(active?.text)
+    );
+    // The tag and the first chunk's label used to read "Sexy move · Sexy move".
+    // Two chunks carrying the same trigger name is not the same thing and is
+    // correct - the same trigger on two faces - so this asks only whether the
+    // tag repeats something the row already says.
+    const tagClash = await page.evaluate(() => {
+      const on = [...document.querySelectorAll('[aria-selected="true"]')].find((n) =>
+        / moves/.test(n.getAttribute('aria-label') ?? '')
+      );
+      const tag = on?.querySelector('#step-tag');
+      if (!tag) return { tag: null, clash: false };
+      const base = (x) => x.replace(/\s*×\d+$/, '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const t = base(tag.innerText);
+      // Counted, not filtered: filtering "the tag's own line" also removed the
+      // chunk label it duplicated, which is the whole thing being looked for.
+      const same = (on.innerText ?? '')
+        .split('\n')
+        .map(base)
+        .filter((l) => l === t);
+      return { tag: tag.innerText.trim(), lines: same.length, clash: same.length > 1 };
+    });
+    check('the active card does not repeat its own algorithm', !tagClash.clash,
+      JSON.stringify(tagClash));
+    check('running: nothing outside the net is under 44pt', (await census()).length === 0,
+      JSON.stringify(await census()));
+
+    // 7b.4 practise mode cannot be spoiled by the transport.
+    await page.click('[aria-label="Practise mode: hide the moves ahead"]');
+    await sleep(900);
+    const transport = await page.evaluate(() =>
+      ['Play', 'Next move'].map((l) => ({
+        l,
+        disabled: document.querySelector(`[aria-label="${l}"]`)?.getAttribute('aria-disabled'),
+      }))
+    );
+    check(
+      'practising: neither Play nor Next can give the answer away',
+      transport.every((t) => t.disabled === 'true'),
+      JSON.stringify(transport)
+    );
+    await page.click('[aria-label="Practise mode: hide the moves ahead"]');
+    await sleep(600);
+    await page.click('[aria-label^="Keep these moves"]');
+    await sleep(1200);
+  }
+
   // -- 8. a computed solve is withdrawn once the cube changes ---------------
   {
     await page.click('[aria-label="Work out the shortest solve"]').catch(() => {});

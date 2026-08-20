@@ -15,6 +15,8 @@ interface Props {
   practising: boolean;
   onPractise: (v: boolean) => void;
   onReveal: () => void;
+  /** Restarts the step so it can be practised again. */
+  onAgain: () => void;
 }
 
 /** "R'" reads as "R apostrophe" otherwise. */
@@ -35,6 +37,7 @@ export function MoveStrip({
   practising,
   onPractise,
   onReveal,
+  onAgain,
 }: Props) {
   const scroller = useRef<ScrollView>(null);
   /**
@@ -203,8 +206,20 @@ export function MoveStrip({
           <Text style={styles.revealText}>Reveal the next move</Text>
         </Pressable>
       )}
+      {/* "Again?" was a question with no affordance: the only way back was the
+          transport's Restart, three controls away and named something else. */}
       {practising && step >= moves.length && (
-        <Text style={styles.done}>Done in {moves.length} moves. Again?</Text>
+        <View style={styles.doneRow}>
+          <Text style={styles.done}>Done in {moves.length} moves.</Text>
+          <Pressable
+            onPress={onAgain}
+            style={styles.again}
+            accessibilityRole="button"
+            accessibilityLabel={`Practise these ${moves.length} moves again`}
+          >
+            <Text style={styles.againText}>Again</Text>
+          </Pressable>
+        </View>
       )}
     </View>
   );
@@ -315,10 +330,22 @@ const styles = StyleSheet.create({
     backgroundColor: accent.soft,
   },
   revealText: { ...type.caption, fontWeight: '700', color: text.primary },
-  done: {
-    ...type.caption,
-    color: text.primary,
-    textAlign: 'center',
-    paddingTop: space.xs,
+  doneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.gutter,
+    marginTop: space.xs,
   },
+  done: { ...type.caption, color: text.primary, flex: 1 },
+  again: {
+    minHeight: hit.min,
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: accent.base,
+    backgroundColor: accent.soft,
+  },
+  againText: { ...type.caption, fontWeight: '700', color: text.primary },
 });

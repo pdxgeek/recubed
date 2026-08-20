@@ -573,6 +573,7 @@ export default function App() {
                 setPlaying(false);
                 stepForward();
               }}
+              onAgain={restoreBase}
             />
           )}
         </View>
@@ -626,10 +627,14 @@ export default function App() {
               accessibilityRole="button"
               accessibilityLabel="Close"
             />
-            <View style={[styles.sheetHolder, { height: Math.min(440, height * 0.62) }]}>
+            {/* The sheet fills the body rather than taking a share of the
+                window. At 440pt the longest explanation overflowed its own
+                scroller by 135pt with no affordance at rest - the cut line was
+                the footnote that says which pieces move, which is the one thing
+                the sheet exists to say. */}
+            <View style={styles.sheetHolder} pointerEvents="box-none">
               <WhySheet
                 step={explaining}
-                state={state}
                 wireframe={wireframe}
                 onWireframe={setWireframe}
                 onWatch={() => {
@@ -660,7 +665,7 @@ export default function App() {
                   stepForward();
                 }
           }
-          onPlayPause={onPlayPause}
+          onPlayPause={practising ? null : onPlayPause}
           onRestart={restoreBase}
           onSpeed={setSpeedMs}
           closeLabel={playback.commit ? 'Keep' : 'Undo'}
@@ -703,7 +708,18 @@ const styles = StyleSheet.create({
   // The sheet covers the body rather than the panel: during a run the panel is
   // 230pt, which is not enough to explain anything in.
   sheetScrim: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: surface.scrim },
-  sheetHolder: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  // Anchored to the bottom of the body and capped by it: the sheet takes the
+  // height its explanation needs and no more, so a short one leaves the cube
+  // visible through the scrim - and the scrim tappable - while a long one gets
+  // the whole body rather than cutting itself off.
+  sheetHolder: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'flex-end',
+  },
   panelSide: {
     justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,

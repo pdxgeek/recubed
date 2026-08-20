@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Move } from '../cube/core';
-import { MoveChunk, chunkByTriggers } from '../cube/algorithms';
+import { NotationBlock, notationBlocks, summaryLine } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
 /**
@@ -21,6 +21,10 @@ import { tokens } from '../ui/theme';
  * lose is the total, so the block states it - `20 moves` - and tapping the
  * block writes the whole run out for anyone who wants to read it end to end.
  * The screen-reader label always carries the full expansion.
+ *
+ * The chunking itself lives in `src/ui/notation.ts`, which imports no
+ * react-native, so `scripts/verify-notation.ts` can check that a collapsed
+ * block still accounts for every move.
  */
 
 interface Props {
@@ -41,9 +45,6 @@ function spoken(notation: string): string {
   return base;
 }
 
-export const chunkLabel = (chunk: MoveChunk) =>
-  chunk.label ? `${chunk.label}${chunk.repeat > 1 ? ` ×${chunk.repeat}` : ''}` : null;
-
 export function Notation({
   moves,
   variant = 'summary',
@@ -52,11 +53,11 @@ export function Notation({
   style,
 }: Props) {
   const notation = useMemo(() => moves.map((m) => m.notation), [moves]);
-  const chunks = useMemo(() => chunkByTriggers(notation), [notation]);
+  const blocks = useMemo(() => notationBlocks(notation), [notation]);
   const raw = notation.join(' ');
   const [expanded, setExpanded] = useState<number[]>([]);
 
-  if (moves.length <= rawBelow || chunks.every((c) => !c.label)) {
+  if (moves.length <= rawBelow || blocks.every((b) => !b.label)) {
     return (
       <Text style={[styles.mono, style]} numberOfLines={numberOfLines}>
         {raw}
@@ -65,37 +66,28 @@ export function Notation({
   }
 
   if (variant === 'summary') {
-    const text = chunks
-      .map((c) => chunkLabel(c) ?? notation.slice(c.start, c.start + c.length).join(' '))
-      .join(' · ');
     return (
       <Text style={[styles.summary, style]} numberOfLines={numberOfLines ?? 1}>
-        {text}
+        {summaryLine(notation)}
       </Text>
     );
   }
 
   return (
     <View style={[styles.blocks, style]}>
-      {chunks.map((chunk) => {
-        const label = chunkLabel(chunk);
-        const period = chunk.length / chunk.repeat;
-        const open = expanded.includes(chunk.start);
-        const shown = chunk.repeat > 1 && !open ? period : chunk.length;
-        const text = notation.slice(chunk.start, chunk.start + shown).join(' ');
-        const spokenAll = notation
-          .slice(chunk.start, chunk.start + chunk.length)
-          .map(spoken)
-          .join(', ');
+      {blocks.map((block: NotationBlock) => {
+        const open = expanded.includes(block.start);
+        const text = (block.repeat > 1 && !open ? block.period : block.all).join(' ');
+        const spokenAll = block.all.map(spoken).join(', ');
         const body = (
           <>
-            {label ? (
+            {block.label ? (
               <View style={styles.labelRow}>
                 <Text style={styles.label} numberOfLines={1}>
-                  {label}
+                  {block.label}
                 </Text>
-                {chunk.repeat > 1 && (
-                  <Text style={styles.total}>{chunk.length} moves</Text>
+                {block.repeat > 1 && (
+                  <Text style={styles.total}>{block.all.length} moves</Text>
                 )}
               </View>
             ) : null}
@@ -106,29 +98,31 @@ export function Notation({
         // Only a collapsed repeat is worth a control: everything else is
         // already printed in full, so a Pressable there would be a 44pt target
         // that does nothing.
-        if (chunk.repeat === 1) {
+        if (block.repeat === 1) {
           return (
-            <View key={chunk.start} style={styles.block}>
+            <View key={block.start} style={styles.block}>
               {body}
             </View>
           );
         }
         return (
           <Pressable
-            key={chunk.start}
+            key={block.start}
             onPress={() =>
               setExpanded((prev) =>
-                prev.includes(chunk.start)
-                  ? prev.filter((n) => n !== chunk.start)
-                  : [...prev, chunk.start]
+                prev.includes(block.start)
+                  ? prev.filter((n) => n !== block.start)
+                  : [...prev, block.start]
               )
             }
             style={[styles.block, styles.blockTappable]}
             accessibilityRole="button"
             accessibilityState={{ expanded: open }}
             aria-expanded={open}
-            accessibilityLabel={`${label}: ${spokenAll}. ${chunk.length} moves.`}
-            accessibilityHint={open ? 'Collapses to one repeat' : `Writes out all ${chunk.length} moves`}
+            accessibilityLabel={`${block.label}: ${spokenAll}. ${block.all.length} moves.`}
+            accessibilityHint={
+              open ? 'Collapses to one repeat' : `Writes out all ${block.all.length} moves`
+            }
           >
             {body}
           </Pressable>

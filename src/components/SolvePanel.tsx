@@ -4,6 +4,7 @@ import { COLOR_IDS, COLOR_NAME, ColorId } from '../cube/core';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
 import { HighlightMode, PiecePair } from '../cube/pieces';
 import { Notation } from './Notation';
+import { tagFor } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
 interface Props {
@@ -263,6 +264,9 @@ export function SolvePanel({
             {method.steps.map((step, i) => {
               const on = step.id === activeStepId;
               const newGroup = i === 0 || method.steps[i - 1].group !== step.group;
+              // Not shown when it would repeat the title or a chunk's name:
+              // the card used to read "… 25 › Sexy move · Sexy move · L U L' U'".
+              const tag = tagFor(step.title, step.algorithm, step.moves.map((m) => m.notation));
               return (
                 <View
                   key={step.id}
@@ -284,14 +288,30 @@ export function SolvePanel({
                     <View style={[styles.rail, on && styles.railOn]} />
                     <View style={styles.stepBody}>
                       <View style={styles.stepHead}>
-                        {/* While this step is running the move strip carries the
-                            title 400pt above; printing it again cost a third of
-                            the list for nothing. */}
+                        {/* The marker carries "running"; the row keeps its name.
+                            It used to read "▸ Running", so the moment a step
+                            started the list stopped saying which step it was -
+                            and the row's own accessibility label with it. */}
                         <Text style={[styles.stepTitle, on && styles.stepTitleOn]} numberOfLines={1}>
-                          {on ? '▸ Running' : step.title}
+                          {on ? `▸ ${step.title}` : step.title}
                         </Text>
                         <Text style={styles.stepCount}>{step.moves.length}</Text>
-                        <Text style={styles.chevron}>›</Text>
+                        {/* Every row, not only the running one. Gating the
+                            explanation on playback meant a learner could not ask
+                            why anything worked until they had committed to
+                            watching it. A 44pt target, which the 36pt text link
+                            it replaces was not - and it costs the card no
+                            height, because it sits in a row that already
+                            existed. */}
+                        <Pressable
+                          onPress={() => onExplain(step)}
+                          style={styles.why}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
+                          accessibilityHint="Explains what these moves do to the cube"
+                        >
+                          <Text style={styles.whyText}>?</Text>
+                        </Pressable>
                       </View>
                       <View style={styles.stepMeta}>
                         {!on && (
@@ -302,30 +322,19 @@ export function SolvePanel({
                             style={styles.notationFlex}
                           />
                         )}
-                        {step.algorithm && step.algorithm !== step.title && (
-                          <Text style={styles.tag} numberOfLines={1}>
-                            {step.algorithm}
+                        {tag && (
+                          // A stable handle, like the strip's `move-current`:
+                          // "does the row print its algorithm twice" is then
+                          // measurable rather than inferred from a text dump.
+                          <Text nativeID={on ? 'step-tag' : undefined} style={styles.tag} numberOfLines={1}>
+                            {tag}
                           </Text>
                         )}
                       </View>
-                      {on && (
-                        <>
-                          {/* Practise mode covers the moves in the strip; the
-                              card must not print the answer underneath it. */}
-                          {!practising && (
-                            <Notation moves={step.moves} variant="blocks" rawBelow={4} />
-                          )}
-                          {/* The paragraph lives in the sheet now. A five-line
-                              prose block here left one card in the viewport. */}
-                          <Pressable
-                            onPress={() => onExplain(step)}
-                            style={styles.why}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
-                          >
-                            <Text style={styles.whyText}>Why this works ›</Text>
-                          </Pressable>
-                        </>
+                      {/* Practise mode covers the moves in the strip; the card
+                          must not print the answer underneath it. */}
+                      {on && !practising && (
+                        <Notation moves={step.moves} variant="blocks" rawBelow={4} />
                       )}
                     </View>
                   </Pressable>
@@ -470,8 +479,19 @@ const styles = StyleSheet.create({
   stepMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   notationFlex: { flex: 1 },
   stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
-  why: { minHeight: 36, justifyContent: 'center' },
-  whyText: { ...type.caption, fontWeight: '700', color: accent.base },
+  // A real 44pt target, and square, so it reads as a button rather than as the
+  // decorative chevron it replaces.
+  why: {
+    minWidth: hit.min,
+    minHeight: hit.min,
+    marginVertical: -space.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: line.outline,
+  },
+  whyText: { ...type.heading, fontWeight: '700', color: accent.base },
   tag: {
     ...type.overline,
     flexShrink: 1,

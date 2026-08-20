@@ -295,7 +295,15 @@ function faceVariants(name: string, notation: string[]): { name: string; notatio
   }));
 }
 
-const TRIGGERS = ALGORITHMS.filter((a) => a.category === 'Triggers' && a.id !== 'trig-sune-trigger')
+/**
+ * The trigger vocabulary `chunkByTriggers` reads a sequence with, longest
+ * first. Exported so `verify-notation.ts` can build sequences out of the same
+ * triggers the app names, rather than out of hand-written letters that would
+ * stop matching the moment the library changed.
+ */
+export const TRIGGERS: { name: string; notation: string[] }[] = ALGORITHMS.filter(
+  (a) => a.category === 'Triggers' && a.id !== 'trig-sune-trigger'
+)
   .flatMap((a) => faceVariants(a.name, a.moves.map((m) => m.notation)))
   .sort((a, b) => b.notation.length - a.notation.length);
 
