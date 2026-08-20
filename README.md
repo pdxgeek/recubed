@@ -69,6 +69,7 @@ native build.
 | `src/cube/solver/plan.ts` | Turns a painted cube into "what is left to do" |
 | `src/cube/orientation.ts` | The 24 ways to hold the cube, used to re-label it |
 | `src/cube/pieces.ts` | Pairing a piece with the slot it belongs in |
+| `src/cube/algorithms.ts` | A checked reference set of 52 algorithms, kept for the solvers to draw on |
 | `src/cube/algorithms.ts` | A checked reference set of 52 algorithms (not currently shown in the app) |
 | `src/render/CubeScene.ts` | The WebGL renderer, picking, turning and animation |
 | `src/components/` | Canvas, panels, move strip and controls |
