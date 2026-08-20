@@ -8,7 +8,7 @@
 import {
   SLOTS, applyAlg, solvedState, vecKey, cubieKind, Vec3, CubeState, parseAlg, invertMove,
 } from '../src/cube/core';
-import { ALGORITHMS } from '../src/cube/algorithms';
+import { ALGORITHMS, chunkByTriggers } from '../src/cube/algorithms';
 
 const inU = (p: Vec3) => p[1] === 1;
 const f2lIntact = (st: CubeState) =>
@@ -62,6 +62,57 @@ for (const a of ALGORITHMS) {
   // Everything else: report the pieces it touches so the UI filter is sane.
   if (a.targets.length === 0) fail(`${label} does nothing`);
   else console.log(`ok    ${label} ${a.corners}c/${a.edges}e  ${a.moves.length} moves`);
+}
+
+// --- reading a sequence as a few things rather than many --------------------
+{
+  const notation = (alg: string) => parseAlg(alg).map((m) => m.notation);
+  const cover = (alg: string) =>
+    chunkByTriggers(notation(alg)).reduce((n, c) => n + c.length, 0);
+  const shape = (alg: string) =>
+    chunkByTriggers(notation(alg))
+      .map((c) => (c.label ? `${c.label}${c.repeat > 1 ? ` x${c.repeat}` : ''}` : `(${c.length})`))
+      .join(' | ');
+
+  const cases: [string, string][] = [
+    // The 25-move beginner step from the audit: four things, not twenty-five.
+    [
+      "L U L' U' L U L' U' U B U B' U' B U B' U' B U B' U' B U B'",
+      'Sexy move x2 | (1) | Sexy move x3 | (3)',
+    ],
+    ["R U R' U'", 'Sexy move'],
+    // The same trigger on another face is the same trigger.
+    ["B U B' U'", 'Sexy move'],
+    ["R' F R F'", 'Sledgehammer'],
+    ['z2', '(1)'],
+  ];
+  for (const [alg, want] of cases) {
+    const got = shape(alg);
+    if (got !== want) {
+      bad++;
+      console.log(`FAIL  chunking "${alg}"\n      got  ${got}\n      want ${want}`);
+    } else {
+      console.log(`ok    chunking ${alg.length > 28 ? alg.slice(0, 28) + '…' : alg} -> ${got}`);
+    }
+  }
+
+  // Whatever it does, it must account for every move exactly once.
+  let uncovered = 0;
+  for (const a of ALGORITHMS) {
+    const chunks = chunkByTriggers(a.moves.map((m) => m.notation));
+    if (cover(a.alg) !== a.moves.length) uncovered++;
+    let at = 0;
+    for (const c of chunks) {
+      if (c.start !== at || c.length <= 0) uncovered++;
+      at += c.length;
+    }
+  }
+  if (uncovered > 0) {
+    bad++;
+    console.log(`FAIL  ${uncovered} algorithms chunk into something that is not a partition`);
+  } else {
+    console.log(`ok    every one of the ${ALGORITHMS.length} algorithms chunks into a clean partition`);
+  }
 }
 
 console.log(bad === 0 ? `\nALL ${ALGORITHMS.length} ALGORITHMS VALID` : `\n${bad} INVALID`);

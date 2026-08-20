@@ -40,8 +40,8 @@ const STICKER_LIFT = BODY / 2 + 0.012;
 const RING_LIFT = BODY / 2 + 0.006;
 
 const BLANK_COLOR = '#2b2b34';
-const BODY_COLOR = '#101015';
-const WIRE_COLOR = '#6f7080';
+const BODY_COLOR = '#191922';
+const WIRE_COLOR = '#8d8fa6';
 /** The piece or slot the user picked. */
 const SELECT_COLOR = '#ffffff';
 /** Its opposite number: the piece that goes there, or the slot it goes in. */
@@ -49,6 +49,21 @@ const PARTNER_COLOR = '#ffb020';
 /** Pieces the algorithm being stepped through is moving. */
 const TARGET_COLOR = '#39d0ff';
 const CLEAR_COLOR = '#0b0b0f';
+
+/**
+ * The same values, exported so the panels can draw a legend that matches what
+ * the cube shows, and so the render tests assert against the shipping constants
+ * rather than a copy of them.
+ */
+export const SCENE_COLORS = {
+  blank: BLANK_COLOR,
+  body: BODY_COLOR,
+  wire: WIRE_COLOR,
+  selected: SELECT_COLOR,
+  partner: PARTNER_COLOR,
+  target: TARGET_COLOR,
+  clear: CLEAR_COLOR,
+} as const;
 
 const FIT_RADIUS = 2.95;
 const FOV = 40;
@@ -459,6 +474,24 @@ export class CubeScene {
     this.cubeQuat.multiply(new Quaternion().setFromRotationMatrix(m).invert());
   }
 
+  /** Current drawing-buffer size the projection was built for. */
+  get size(): { width: number; height: number } {
+    return { width: this.width, height: this.height };
+  }
+
+  /**
+   * Re-fit the projection when the surface changes size - rotation, a tablet
+   * side panel appearing, split view. Cheap enough to call every frame, which
+   * is how the canvas keeps up with a drawing buffer it is never told about.
+   */
+  resizeIfNeeded(width: number, height: number): boolean {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (w === this.width && h === this.height) return false;
+    this.resize(w, h);
+    return true;
+  }
+
   resize(width: number, height: number) {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
@@ -697,6 +730,9 @@ export class CubeScene {
 
     // Wireframe cages for everything hidden.
     this.bind(this.edgeBuffer);
+    // GLES drivers commonly clamp this to 1, but where it is honoured the cage
+    // is the only thing representing twenty cubies, so ask for more than a hair.
+    gl.lineWidth(2);
     for (const cubie of this.cubies) {
       if (cubie.solid) continue;
       this.scratchModel
@@ -718,9 +754,12 @@ export class CubeScene {
         this.draw(this.scratchModel, s.ring, 6, gl.TRIANGLES, 1);
       }
     }
-    // Wireframe cages answer to a tap too, so a piece can always be picked out.
+    // Coloured tiles. Stripped back with the rest of the cubie in wireframe
+    // mode - without this guard the cage is drawn behind a full set of tiles
+    // and the wireframe appears to do nothing at all.
     for (const cubie of this.cubies) {
       for (const s of cubie.stickers) {
+        if (!s.visible) continue;
         this.scratchModel
           .copy(this.cubeMatrix)
           .multiply(this.cubieLocal(cubie))

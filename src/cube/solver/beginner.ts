@@ -19,7 +19,7 @@ import {
   applyAlgCubie,
   isCubieSolved,
 } from '../cubie';
-import { Move, Vec3, parseAlg } from '../core';
+import { Move, Vec3, algAffectedCubies, cubieKind, parseAlg } from '../core';
 import { PieceSet, facesOnly, findSequence, mergeSets, piecesSolved } from './search';
 
 export interface SolveStep {
@@ -419,7 +419,11 @@ function lastLayerStage(
       detail,
       algorithm: entry.name,
       moves: parseAlg(entry.alg),
-      focus: [],
+      // The last layer is worked as a group, so there is no single destination.
+      // The pieces the algorithm actually displaces are the next best thing:
+      // they are what the highlight should follow and what a learner who taps
+      // one of them is asking about.
+      focus: algAffectedCubies(entry.alg).filter((p) => cubieKind(p) >= 2),
     };
   });
   return {

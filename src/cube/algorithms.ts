@@ -145,3 +145,97 @@ export function algorithmsForSelection(selected: Vec3[]): SelectionMatch {
     .map((x) => x.a);
   return { algorithms: partial, exact: false };
 }
+
+// ---------------------------------------------------------------------------
+// Reading a long sequence as a few things rather than many
+// ---------------------------------------------------------------------------
+
+/**
+ * The short sequences cubers actually think in. A 25-move beginner step is six
+ * repetitions of one of these plus a couple of setup turns; written out move by
+ * move it reads as twenty-five things to remember, which is how the app used to
+ * present it.
+ *
+ * `Sexy x3` is deliberately left out: three sexy moves read better as
+ * "Sexy move ×3" than as one twelve-move block with its own name.
+ */
+const TRIGGER_FACES = ['R', 'L', 'F', 'B'];
+
+/**
+ * The same trigger performed on a different face is the same trigger - a
+ * beginner's corner insertion is the sexy move whether it is written
+ * `R U R' U'` or `B U B' U'`. So each four-move trigger that turns exactly one
+ * non-U face is generalised across the four side faces, keeping its name. No
+ * new entries in the algorithm library: these are shapes, not algorithms.
+ */
+function faceVariants(name: string, notation: string[]): { name: string; notation: string[] }[] {
+  const faces = new Set(notation.map((n) => n[0]).filter((f) => f !== 'U'));
+  if (notation.length !== 4 || faces.size !== 1) return [{ name, notation }];
+  const base = [...faces][0];
+  return TRIGGER_FACES.map((f) => ({
+    name,
+    notation: notation.map((n) => (n[0] === base ? f + n.slice(1) : n)),
+  }));
+}
+
+const TRIGGERS = ALGORITHMS.filter((a) => a.category === 'Triggers' && a.id !== 'trig-sune-trigger')
+  .flatMap((a) => faceVariants(a.name, a.moves.map((m) => m.notation)))
+  .sort((a, b) => b.notation.length - a.notation.length);
+
+export interface MoveChunk {
+  /** The trigger's name, or null for moves that are not part of one. */
+  label: string | null;
+  /** Index of the first move of the chunk. */
+  start: number;
+  /** How many moves the chunk covers in total, repeats included. */
+  length: number;
+  /** How many times the trigger runs back to back. 1 for a plain run. */
+  repeat: number;
+}
+
+const matchesAt = (notation: string[], at: number, pattern: string[]) =>
+  pattern.every((p, i) => notation[at + i] === p);
+
+/**
+ * Break a move sequence into the triggers it is built from. Greedy and
+ * longest-first, with back-to-back repeats of the same trigger merged, so
+ * `L U L' U' L U L' U' U B U B'` reads as "Sexy move ×2, U, Reverse sexy".
+ */
+export function chunkByTriggers(notation: string[]): MoveChunk[] {
+  const out: MoveChunk[] = [];
+  let i = 0;
+  while (i < notation.length) {
+    const hit = TRIGGERS.find(
+      (t) => i + t.notation.length <= notation.length && matchesAt(notation, i, t.notation)
+    );
+    if (hit) {
+      let repeat = 1;
+      while (
+        i + hit.notation.length * (repeat + 1) <= notation.length &&
+        matchesAt(notation, i + hit.notation.length * repeat, hit.notation)
+      ) {
+        repeat++;
+      }
+      out.push({
+        label: hit.name,
+        start: i,
+        length: hit.notation.length * repeat,
+        repeat,
+      });
+      i += hit.notation.length * repeat;
+      continue;
+    }
+    // A run of moves belonging to no trigger is one unlabelled chunk.
+    const start = i;
+    while (
+      i < notation.length &&
+      !TRIGGERS.some(
+        (t) => i + t.notation.length <= notation.length && matchesAt(notation, i, t.notation)
+      )
+    ) {
+      i++;
+    }
+    out.push({ label: null, start, length: i - start, repeat: 1 });
+  }
+  return out;
+}

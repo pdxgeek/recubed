@@ -12,10 +12,12 @@ import {
   FACES,
   FACE_NORMAL,
   Face,
+  Move,
   Vec3,
   moveQuarterTurns,
   MOVE_DEFS,
   parseAlg,
+  parseMove,
   rotateVec,
   vecKey,
 } from './core';
@@ -97,3 +99,30 @@ export const rotateCubie = (rot: CubeRotation, pos: Vec3): Vec3 => [
   rot.basis[0][1] * pos[0] + rot.basis[1][1] * pos[1] + rot.basis[2][1] * pos[2],
   rot.basis[0][2] * pos[0] + rot.basis[1][2] * pos[1] + rot.basis[2][2] * pos[2],
 ];
+
+/**
+ * Rewrite a move sequence for the cube's new labels.
+ *
+ * A drag re-labels the cube: the same physical face that used to be called `R`
+ * is now called `faceMap.R`. A solution worked out before the drag still turns
+ * the right faces, it is just written down wrong - so it is rewritten rather
+ * than thrown away, which is what used to happen to a twenty-second search the
+ * moment the user turned the cube round to look at it.
+ *
+ * Returns null for anything that is not a plain face turn (slices, whole-cube
+ * rotations), where the caller should fall back to recomputing.
+ */
+export function relabelMoves(rot: CubeRotation, moves: Move[]): Move[] | null {
+  const out: Move[] = [];
+  for (const mv of moves) {
+    const base = mv.base as Face;
+    if (!(FACES as readonly string[]).includes(base)) return null;
+    const suffix = mv.notation.slice(base.length);
+    try {
+      out.push(parseMove(rot.faceMap[base] + suffix));
+    } catch {
+      return null;
+    }
+  }
+  return out;
+}

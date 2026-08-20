@@ -1,7 +1,7 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { COLOR_HEX, COLOR_IDS, COLOR_NAME, ColorId, CubeState, SLOTS } from '../cube/core';
-import { theme } from '../ui/theme';
+import React, { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { COLOR_HEX, COLOR_IDS, COLOR_NAME, ColorId, CubeState, SLOTS, isCenter } from '../cube/core';
+import { inkOn, tokens } from '../ui/theme';
 
 interface Props {
   state: CubeState;
@@ -10,7 +10,14 @@ interface Props {
   onFillSolved: () => void;
   onScramble: () => void;
   onClear: () => void;
+  /** Offered once every sticker is painted, so the cube leads somewhere. */
+  onSolveThis: () => void;
+  /** Just-in-time feedback, e.g. after a tap on a centre. Cleared by the shell. */
+  nudge?: string | null;
 }
+
+/** 48 of the 54 stickers are paintable; the six centres are fixed. */
+const PAINTABLE = SLOTS.filter((s) => !isCenter(s.pos));
 
 /** How many stickers carry each colour. A legal cube has nine of each. */
 function tally(state: CubeState) {
@@ -22,101 +29,264 @@ function tally(state: CubeState) {
     if (c) counts[c]++;
     else blank++;
   }
-  return { counts, blank };
+  let painted = 0;
+  for (const s of PAINTABLE) if (state.colors[s.index]) painted++;
+  return { counts, blank, painted };
 }
 
-export function PaintPanel({ state, active, onActive, onFillSolved, onScramble, onClear }: Props) {
-  const { counts, blank } = tally(state);
+export function PaintPanel({
+  state,
+  active,
+  onActive,
+  onFillSolved,
+  onScramble,
+  onClear,
+  onSolveThis,
+  nudge,
+}: Props) {
+  const { counts, blank, painted } = tally(state);
+  const complete = painted === PAINTABLE.length;
+  // Clearing throws away a whole painted cube, so it asks first. An inline
+  // arm-then-confirm rather than a dialog: it works on every target and does
+  // not take the user out of the panel.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const id = setTimeout(() => setArmed(false), 3000);
+    return () => clearTimeout(id);
+  }, [armed]);
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>Paint the stickers</Text>
-      <Text style={styles.hint}>
-        Centres are fixed by the colour scheme. Pick a colour, then tap a sticker on the cube.
-        Drag anywhere to spin it around.
-      </Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Paint the stickers</Text>
+        <Pressable
+          onPress={() => onActive(null)}
+          style={[styles.erase, active === null && styles.eraseOn]}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: active === null }}
+          accessibilityLabel={`Erase, ${blank} stickers blank`}
+        >
+          <View style={styles.eraseDot} />
+          <Text style={[styles.eraseText, active === null && styles.eraseTextOn]}>
+            Erase {blank}
+          </Text>
+        </Pressable>
+      </View>
 
-      <ScrollView contentContainerStyle={styles.swatches}>
+      <View
+        accessibilityRole="progressbar"
+        accessibilityLabel="Stickers painted"
+        accessibilityValue={{ min: 0, max: PAINTABLE.length, now: painted }}
+      >
+        <View style={styles.track}>
+          <View
+            style={[
+              styles.fill,
+              { width: `${(painted / PAINTABLE.length) * 100}%` },
+              complete && styles.fillDone,
+            ]}
+          />
+        </View>
+        <Text style={[styles.progressText, complete && styles.progressDone]}>
+          {complete
+            ? `All ${PAINTABLE.length} painted — ready to solve`
+            : `${painted} of ${PAINTABLE.length} painted`}
+        </Text>
+      </View>
+
+      <View style={styles.grid} accessibilityRole="radiogroup">
         {COLOR_IDS.map((c) => {
           const n = counts[c];
           const on = active === c;
+          const tooMany = n > 9;
           return (
             <Pressable
               key={c}
               onPress={() => onActive(c)}
-              style={[styles.swatch, on && styles.swatchOn]}
+              style={[styles.tile, on && styles.tileOn, tooMany && styles.tileBad]}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
+              accessibilityHint="Then tap stickers on the cube"
             >
-              <View style={[styles.chip, { backgroundColor: COLOR_HEX[c] }]} />
-              <Text style={[styles.swatchName, on && styles.swatchNameOn]}>{COLOR_NAME[c]}</Text>
-              <Text style={[styles.count, n === 9 && styles.countOk, n > 9 && styles.countBad]}>
-                {n}/9
-              </Text>
+              <View style={[styles.bar, { backgroundColor: COLOR_HEX[c] }]}>
+                <Text
+                  style={[styles.letter, { color: inkOn(COLOR_HEX[c]) }]}
+                  maxFontSizeMultiplier={1.4}
+                >
+                  {c}
+                </Text>
+              </View>
+              <View style={styles.tileFoot}>
+                <Text style={[styles.tileName, on && styles.tileNameOn]} numberOfLines={1}>
+                  {COLOR_NAME[c]}
+                </Text>
+                <Text
+                  style={[styles.count, n === 9 && styles.countOk, tooMany && styles.countBad]}
+                  maxFontSizeMultiplier={1.4}
+                >
+                  {n}/9{n === 9 ? ' ✓' : tooMany ? ' !' : ''}
+                </Text>
+              </View>
             </Pressable>
           );
         })}
-
-        <Pressable
-          onPress={() => onActive(null)}
-          style={[styles.swatch, active === null && styles.swatchOn]}
-        >
-          <View style={[styles.chip, styles.chipErase]} />
-          <Text style={[styles.swatchName, active === null && styles.swatchNameOn]}>Erase</Text>
-          <Text style={styles.count}>{blank}</Text>
-        </Pressable>
-      </ScrollView>
-
-      <View style={styles.actions}>
-        <Pressable onPress={onFillSolved} style={styles.action}>
-          <Text style={styles.actionText}>Solved</Text>
-        </Pressable>
-        <Pressable onPress={onScramble} style={styles.action}>
-          <Text style={styles.actionText}>Scramble</Text>
-        </Pressable>
-        <Pressable onPress={onClear} style={styles.action}>
-          <Text style={styles.actionText}>Clear</Text>
-        </Pressable>
       </View>
 
-      <Text style={[styles.status, blank === 0 && styles.statusOk]}>
-        {blank === 0 ? 'All 54 stickers assigned' : `${blank} stickers still blank`}
-      </Text>
+      {nudge ? (
+        <Text style={styles.nudge} accessibilityLiveRegion="polite">
+          {nudge}
+        </Text>
+      ) : null}
+
+      {complete ? (
+        <Pressable
+          onPress={onSolveThis}
+          style={styles.primary}
+          accessibilityRole="button"
+          accessibilityLabel="Solve this cube"
+        >
+          <Text style={styles.primaryText}>Solve this cube →</Text>
+        </Pressable>
+      ) : (
+        <View style={styles.actions}>
+          <Pressable
+            onPress={onFillSolved}
+            style={styles.action}
+            accessibilityRole="button"
+            accessibilityLabel="Fill in a solved cube"
+          >
+            <Text style={styles.actionText}>Solved</Text>
+          </Pressable>
+          <Pressable
+            onPress={onScramble}
+            style={styles.action}
+            accessibilityRole="button"
+            accessibilityLabel="Fill in a random scramble"
+          >
+            <Text style={styles.actionText}>Scramble</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              if (armed) {
+                setArmed(false);
+                onClear();
+              } else setArmed(true);
+            }}
+            style={[styles.action, armed && styles.actionArmed]}
+            accessibilityRole="button"
+            accessibilityLabel={armed ? 'Tap again to clear every sticker' : 'Clear every sticker'}
+          >
+            <Text style={[styles.actionText, armed && styles.actionTextArmed]}>
+              {armed ? 'Sure?' : 'Start over'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
 
+const { surface, line, text, accent, status, space, type, radius, hit, cube } = tokens;
+
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 14, gap: 10 },
-  title: { color: theme.text, fontSize: 15, fontWeight: '700' },
-  hint: { color: theme.textDim, fontSize: 12, lineHeight: 17 },
-  swatches: { gap: 6, paddingVertical: 4 },
-  swatch: {
+  wrap: { flex: 1, paddingHorizontal: space.gutter, paddingVertical: space.md, gap: space.md },
+  header: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: hit.min },
+  title: { ...type.title, color: text.primary, flex: 1 },
+  erase: {
+    minHeight: hit.min,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    padding: 8,
-    borderRadius: theme.radius,
+    gap: space.sm,
+    paddingHorizontal: 14,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: 'transparent',
-    backgroundColor: theme.panelAlt,
+    borderColor: line.outline,
   },
-  swatchOn: { borderColor: theme.accent, backgroundColor: theme.accentDim },
-  chip: { width: 22, height: 22, borderRadius: 5, borderWidth: 1, borderColor: '#00000055' },
-  chipErase: { backgroundColor: '#2b2b34', borderColor: theme.border, borderStyle: 'dashed' },
-  swatchName: { color: theme.textDim, fontSize: 13, fontWeight: '600', flex: 1 },
-  swatchNameOn: { color: theme.text },
-  count: { color: theme.textDim, fontSize: 12, fontVariant: ['tabular-nums'] },
-  countOk: { color: '#5fd67f' },
-  countBad: { color: '#ff6b6b' },
-  actions: { flexDirection: 'row', gap: 8 },
+  eraseOn: { borderWidth: 2, borderColor: accent.base, backgroundColor: accent.soft },
+  eraseDot: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: line.outline,
+    backgroundColor: cube.blank,
+  },
+  eraseText: { ...type.caption, fontWeight: '600', color: text.secondary },
+  eraseTextOn: { color: text.primary },
+
+  track: { height: 4, borderRadius: 2, backgroundColor: surface.sunken, overflow: 'hidden' },
+  fill: { height: 4, borderRadius: 2, backgroundColor: accent.base },
+  fillDone: { backgroundColor: status.ok },
+  progressText: { ...type.caption, ...tokens.numeric, color: text.tertiary, marginTop: space.xs },
+  progressDone: { color: status.ok },
+
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  tile: {
+    flexBasis: 0,
+    flexGrow: 1,
+    minWidth: 92,
+    height: 72,
+    padding: space.sm,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    backgroundColor: surface.raised,
+    justifyContent: 'space-between',
+  },
+  tileOn: { borderColor: accent.base, backgroundColor: accent.soft },
+  tileBad: { borderColor: status.danger },
+  bar: {
+    height: 30,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: surface.chipRim,
+  },
+  letter: { fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  tileFoot: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
+  tileName: { ...type.caption, color: text.secondary, flex: 1 },
+  tileNameOn: { color: text.primary },
+  count: { ...type.caption, ...tokens.numeric, color: text.tertiary },
+  countOk: { color: status.ok },
+  countBad: { color: status.danger, fontWeight: '700' },
+
+  nudge: {
+    ...type.caption,
+    color: text.primary,
+    backgroundColor: status.warnSoft,
+    borderRadius: radius.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    overflow: 'hidden',
+  },
+
+  actions: { flexDirection: 'row', gap: space.sm, marginTop: 'auto' },
   action: {
     flex: 1,
-    paddingVertical: 9,
-    borderRadius: theme.radius,
+    minHeight: hit.min,
+    justifyContent: 'center',
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: theme.border,
+    borderColor: line.outline,
     alignItems: 'center',
   },
-  actionText: { color: theme.textDim, fontSize: 12, fontWeight: '600' },
-  status: { color: theme.warn, fontSize: 12 },
-  statusOk: { color: '#5fd67f' },
+  actionArmed: { borderColor: status.danger, backgroundColor: status.dangerSoft },
+  actionText: { ...type.caption, fontWeight: '600', color: text.secondary },
+  actionTextArmed: { color: status.danger },
+
+  primary: {
+    marginTop: 'auto',
+    minHeight: hit.large,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 2,
+    borderColor: accent.base,
+    backgroundColor: accent.soft,
+  },
+  primaryText: { ...type.heading, color: text.primary },
 });

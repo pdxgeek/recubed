@@ -290,10 +290,19 @@ export const tablesReady = () => tables !== null;
 export interface SolveOptions {
   /** Stop once a solution this short is found. */
   targetLength?: number;
-  /** Give up looking for something better after this many milliseconds. */
+  /** Give up looking for something *better* after this many milliseconds. */
   timeBudgetMs?: number;
+  /**
+   * Hard ceiling, used when the budget ran out before any solution at all was
+   * found. Defaults to four times the budget. The search never runs unbounded:
+   * a caller that asked for a millisecond meant it.
+   */
+  hardBudgetMs?: number;
   maxPhase1Depth?: number;
 }
+
+/** Thrown when no solution turned up inside the hard ceiling. */
+export class SolveTimeout extends Error {}
 
 const allowed = (move: number, lastFace: number) => {
   if (lastFace < 0) return true;
@@ -308,8 +317,10 @@ export function solveKociemba(cube: CubieCube, options: SolveOptions = {}): numb
   const t = buildTables();
   const target = options.targetLength ?? 21;
   const budget = options.timeBudgetMs ?? 1200;
+  const started = Date.now();
+  const hardBudget = Math.max(0, options.hardBudgetMs ?? budget * 4, budget);
   const maxDepth1 = options.maxPhase1Depth ?? 12;
-  let deadline = Date.now() + budget;
+  let deadline = started + budget;
 
   const found: { best: number[] | null } = { best: null };
 
@@ -372,7 +383,10 @@ export function solveKociemba(cube: CubieCube, options: SolveOptions = {}): numb
   };
 
   const dfs1 = (tw: number, fl: number, sl: number, depth: number, last: number): boolean => {
-    if (Date.now() > deadline) return true; // out of time: unwind
+    // Out of time: unwind. `found.best` is what says whether that unwind was a
+    // success or a surrender - the return value alone cannot tell them apart.
+    // The comparison is inclusive so that a budget of zero really means zero.
+    if (Date.now() >= deadline) return true;
     if (tw === 0 && fl === 0 && sl === 0) {
       tryPhase2();
       return found.best !== null && found.best.length <= target;
@@ -395,18 +409,27 @@ export function solveKociemba(cube: CubieCube, options: SolveOptions = {}): numb
     path1.length = 0;
     if (dfs1(twist0, flip0, slice0, d, -1)) break;
     if (found.best && found.best.length <= target) break;
-    if (Date.now() > deadline && found.best) break;
+    if (Date.now() >= deadline && found.best) break;
   }
 
   if (!found.best) {
-    // Nothing inside the budget: keep going without one until a solution exists.
-    deadline = Infinity;
+    // Nothing inside the budget. Extend it - never drop it, which is what this
+    // used to do, throwing the limit away in exactly the case it exists for.
+    deadline = started + hardBudget;
     for (let d = h1(twist0, flip0, slice0); d <= 14 && !found.best; d++) {
       path1.length = 0;
       dfs1(twist0, flip0, slice0, d, -1);
+      if (Date.now() >= deadline) break;
     }
   }
-  return found.best ?? [];
+  if (!found.best || found.best.length === 0) {
+    // Better to say so than to hand back an empty list, which reads on screen
+    // as a step called "Solve in 0 moves".
+    throw new SolveTimeout(
+      `No short solve found in ${Date.now() - started}ms. Try again, or work down the beginner list.`
+    );
+  }
+  return found.best;
 }
 
 export const movesToNotation = (moves: number[]) => moves.map((m) => BASIC_MOVES[m]);

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Pressable,
+  Animated,
   SafeAreaView,
   StatusBar,
   StyleSheet,
@@ -9,33 +9,41 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import {
-  CUBIE_BY_KEY,
   ColorId,
   CubeState,
   Move,
   SLOTS,
-  SLOTS_BY_CUBIE,
   applyAlg,
   applyMove,
   blankState,
   cloneState,
   invertMove,
   isCenter,
-  resetTracking,
   solvedState,
   vecKey,
 } from './src/cube/core';
-import { rotateCubie, rotationBringing } from './src/cube/orientation';
-import { HighlightMode, pairFor } from './src/cube/pieces';
+import { rotationBringing } from './src/cube/orientation';
+import { HighlightMode } from './src/cube/pieces';
+import {
+  Selection,
+  partnerSlots as partnerSlotsFor,
+  reanchor,
+  sameSelection,
+  selectAt,
+  selectionName as nameOfSelection,
+  selectionPair,
+  selectionSlots as slotsOfSelection,
+  stepForSelection as stepFor,
+} from './src/cube/selection';
+import { stepStartState } from './src/cube/run';
 import {
   PlanMethod,
   PlanStep,
   SolvePlan,
   buildPlan,
   buildShortest,
-  colorKeyOfCubie,
-  describeCubie,
-  titleCase,
+  prepareShortest,
+  relabelMethod,
 } from './src/cube/solver/plan';
 import { CubeScene } from './src/render/CubeScene';
 import { CubeCanvas } from './src/components/CubeCanvas';
@@ -44,7 +52,7 @@ import { PaintPanel } from './src/components/PaintPanel';
 import { SolvePanel } from './src/components/SolvePanel';
 import { StepBar } from './src/components/StepBar';
 import { MoveStrip } from './src/components/MoveStrip';
-import { theme } from './src/ui/theme';
+import { tokens } from './src/ui/theme';
 
 interface ActiveRun {
   id: string;
@@ -55,12 +63,30 @@ interface ActiveRun {
   commitOnClose: boolean;
 }
 
+/**
+ * Whether the "drag to spin" nudge has already been shown. Module scope, so it
+ * survives every mode change and remount for the life of the session - which is
+ * the case that matters. It used to be a permanent caption over the canvas.
+ */
+let canvasNudgeSeen = false;
+
 export default function App() {
   const sceneRef = useRef<CubeScene | null>(null);
   const baseState = useRef<CubeState | null>(null);
   const liveState = useRef<CubeState | null>(null);
-  const { width } = useWindowDimensions();
-  const wide = width >= 720;
+  /**
+   * The cube the current plan describes. Step preludes are absolute, measured
+   * from here - not from wherever the last step happened to leave the cube.
+   */
+  const planOrigin = useRef<CubeState | null>(null);
+  const { width, height } = useWindowDimensions();
+  // A portrait iPad keeps the bottom sheet: a side panel there would leave the
+  // canvas pinched without giving the panel anything useful to do. A landscape
+  // window gets the side panel whatever its size - a sheet across the bottom of
+  // a short window leaves the cube nowhere to live.
+  const wide = width >= 900 || (width > height && width >= 640);
+  /** The sheet may never be taller than the window can spare. */
+  const sheetMin = Math.min(360, Math.round(height * 0.42));
 
   /**
    * Bumped every time a new scene is built, so the effects below re-apply the
@@ -72,8 +98,8 @@ export default function App() {
   const [mode, setMode] = useState<Mode>('paint');
   const [state, setState] = useState<CubeState>(() => blankState());
   const [paintColor, setPaintColor] = useState<ColorId | null>('W');
-  /** One piece or slot at a time, so nothing unrelated is lit up at once. */
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  /** One piece or slot at a time, held by identity rather than by position. */
+  const [selection, setSelection] = useState<Selection | null>(null);
   const [highlightMode, setHighlightMode] = useState<HighlightMode>('piece');
   const [showPartner, setShowPartner] = useState(true);
   const [run, setRun] = useState<ActiveRun | null>(null);
@@ -81,6 +107,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [speedMs, setSpeedMs] = useState(850);
   const [wireframe, setWireframe] = useState(false);
+  const [paintNudge, setPaintNudge] = useState<string | null>(null);
 
   const [plan, setPlan] = useState<SolvePlan | null>(null);
   const [shortest, setShortest] = useState<PlanMethod | null>(null);
@@ -88,21 +115,14 @@ export default function App() {
 
   // -- derived -------------------------------------------------------------
 
-  /** The piece the user picked, and its opposite number. */
-  const pair = useMemo(
-    () => (selectedKey ? pairFor(state, CUBIE_BY_KEY.get(selectedKey)!, highlightMode) : null),
-    [selectedKey, state, highlightMode]
+  const pair = useMemo(() => selectionPair(state, selection), [state, selection]);
+  const selectionSlots = useMemo(() => slotsOfSelection(state, selection), [state, selection]);
+  const partnerSlots = useMemo(
+    () => partnerSlotsFor(state, selection, showPartner),
+    [state, selection, showPartner]
   );
-
-  const selectionSlots = useMemo(
-    () => (selectedKey ? SLOTS_BY_CUBIE.get(selectedKey) ?? [] : []),
-    [selectedKey]
-  );
-
-  const partnerSlots = useMemo(() => {
-    if (!showPartner || !pair?.partner || pair.atHome) return [];
-    return SLOTS_BY_CUBIE.get(vecKey(pair.partner)) ?? [];
-  }, [pair, showPartner]);
+  const selectedName = useMemo(() => nameOfSelection(state, selection), [state, selection]);
+  const stepForSelection = useMemo(() => stepFor(plan, selection), [plan, selection]);
 
   /** Pieces the running step is moving, followed as the cube turns. */
   const runTargetSlots = useMemo(() => {
@@ -119,24 +139,15 @@ export default function App() {
 
   const targetKeys = useMemo(() => focusSlots.map((i) => vecKey(SLOTS[i].pos)), [focusSlots]);
 
-  /**
-   * The step in the plan that puts the selected piece where it belongs. Pieces
-   * are matched by their colours, which survive the cube being re-labelled.
-   */
-  const selectedName = useMemo(
-    () => (selectedKey ? describeCubie(state, CUBIE_BY_KEY.get(selectedKey)!) : null),
-    [selectedKey, state]
-  );
-
-  const stepForSelection = useMemo(() => {
-    if (!selectedKey || !plan?.ok) return null;
-    const wanted = colorKeyOfCubie(state, CUBIE_BY_KEY.get(selectedKey)!);
+  /** Where the running step sits in its method, for the transport bar. */
+  const runPosition = useMemo(() => {
+    if (!run || !plan?.ok) return null;
     for (const method of plan.methods) {
-      const found = method.steps.find((st) => st.pieceColors === wanted);
-      if (found) return found;
+      const i = method.steps.findIndex((s) => s.id === run.id);
+      if (i >= 0) return `Step ${i + 1} of ${method.steps.length}`;
     }
     return null;
-  }, [selectedKey, state, plan]);
+  }, [run, plan]);
 
   // -- scene sync ----------------------------------------------------------
 
@@ -166,24 +177,49 @@ export default function App() {
   // Work out what is left to do whenever the cube settles.
   useEffect(() => {
     if (mode !== 'solve' || run) return;
+    planOrigin.current = state;
     setPlan(buildPlan(state));
   }, [mode, state, run]);
 
-  // A different cube means the old search result no longer applies.
+  // -- the one-shot canvas nudge -------------------------------------------
+
+  const [nudgeVisible, setNudgeVisible] = useState(!canvasNudgeSeen);
+  const nudgeOpacity = useRef(new Animated.Value(canvasNudgeSeen ? 0 : 1)).current;
   useEffect(() => {
-    if (!run) setShortest(null);
-  }, [state, run]);
+    if (!nudgeVisible) return;
+    const id = setTimeout(() => {
+      canvasNudgeSeen = true;
+      Animated.timing(nudgeOpacity, {
+        toValue: 0,
+        duration: tokens.motion.slow,
+        useNativeDriver: true,
+      }).start(() => setNudgeVisible(false));
+    }, tokens.motion.nudgeHold);
+    return () => clearTimeout(id);
+  }, [nudgeVisible, nudgeOpacity]);
+
+  // Paint-mode nudges say their piece and then get out of the way.
+  useEffect(() => {
+    if (!paintNudge) return;
+    const id = setTimeout(() => setPaintNudge(null), tokens.motion.toastHold);
+    return () => clearTimeout(id);
+  }, [paintNudge]);
 
   // -- interaction ---------------------------------------------------------
 
   const onPickSticker = useCallback(
     (slot: number | null) => {
       if (slot === null) {
-        if (mode === 'solve') setSelectedKey(null);
+        if (mode === 'solve') setSelection(null);
         return;
       }
-      // Centres never move, so they are neither paintable nor lookup-able.
-      if (isCenter(SLOTS[slot].pos)) return;
+      const pos = SLOTS[slot].pos;
+      if (isCenter(pos)) {
+        // The one rule about centres, said at the moment it is needed rather
+        // than printed permanently above the colour picker.
+        if (mode === 'paint') setPaintNudge('Centres never move — they set the colour scheme.');
+        return;
+      }
       if (mode === 'paint') {
         setState((s) => {
           const colors = s.colors.slice();
@@ -193,10 +229,21 @@ export default function App() {
         return;
       }
       // Always the whole piece, never a single sticker, and only one at a time.
-      const key = vecKey(SLOTS[slot].pos);
-      setSelectedKey((prev) => (prev === key ? null : key));
+      setSelection((prev) => {
+        const next = selectAt(liveState.current ?? state, pos, highlightMode);
+        return sameSelection(prev, next) ? null : next;
+      });
     },
-    [mode, paintColor]
+    [mode, paintColor, highlightMode, state]
+  );
+
+  const onHighlightMode = useCallback(
+    (m: HighlightMode) => {
+      setHighlightMode(m);
+      // Keep the ring where it is on screen and read it the other way round.
+      setSelection((prev) => (prev ? reanchor(liveState.current ?? state, prev, m) : prev));
+    },
+    [state]
   );
 
   /**
@@ -204,6 +251,9 @@ export default function App() {
    * screen really is D. The colours are permuted and the view is counter-turned
    * in the same tick, so nothing appears to move - but from here on the solver
    * and the move notation talk about the cube the way the user is holding it.
+   *
+   * The selection needs no help here: it is held by colour, and colours do not
+   * care what the faces are called.
    */
   const anchorToView = useCallback(() => {
     const scene = sceneRef.current;
@@ -218,10 +268,9 @@ export default function App() {
     scene.setColors(next);
     scene.absorbRotation(rot);
     setState(next);
-    setSelectedKey((k) => {
-      const pos = k ? CUBIE_BY_KEY.get(k) : null;
-      return pos ? vecKey(rotateCubie(rot, pos)) : k;
-    });
+    // The cube has not changed, only its labels - so the search result is
+    // rewritten for the new labels rather than discarded.
+    setShortest((prev) => (prev ? relabelMethod(prev, rot) : prev));
   }, [run]);
 
   const restoreBase = useCallback(() => {
@@ -231,24 +280,15 @@ export default function App() {
     setPlaying(false);
   }, []);
 
-  const startRun = useCallback(
-    (next: ActiveRun, prelude: Move[] = []) => {
-      sceneRef.current?.cancelMove();
-      setPlaying(false);
-      // Everything before this step is applied at once, so any step in the list
-      // can be picked out and practised without doing the ones before it first.
-      const from = prelude.length
-        ? applyAlg(baseState.current ?? state, prelude)
-        : baseState.current ?? state;
-      const base = resetTracking(from);
-      baseState.current = base;
-      liveState.current = base;
-      setState(cloneState(base));
-      setStep(0);
-      setRun(next);
-    },
-    [state]
-  );
+  const startRun = useCallback((next: ActiveRun, base: CubeState) => {
+    sceneRef.current?.cancelMove();
+    setPlaying(false);
+    baseState.current = base;
+    liveState.current = base;
+    setState(cloneState(base));
+    setStep(0);
+    setRun(next);
+  }, []);
 
   const closeRun = useCallback(() => {
     if (!run?.commitOnClose) restoreBase();
@@ -257,6 +297,9 @@ export default function App() {
       setPlaying(false);
       setStep(0);
       baseState.current = state;
+      // The finished cube is what the next plan - and the next prelude - are
+      // measured from.
+      planOrigin.current = state;
     }
     setRun(null);
   }, [run, restoreBase, state]);
@@ -310,7 +353,7 @@ export default function App() {
     (m: Mode) => {
       if (m === mode) return;
       closeRun();
-      setSelectedKey(null);
+      setSelection(null);
       setMode(m);
     },
     [mode, closeRun]
@@ -322,7 +365,9 @@ export default function App() {
     setPlaying(false);
     setStep(0);
     setShortest(null);
+    setSelection(null);
     baseState.current = next;
+    planOrigin.current = next;
     setState(next);
   }, []);
 
@@ -346,17 +391,23 @@ export default function App() {
 
   const computeShortest = useCallback(() => {
     setComputing(true);
-    // Let the spinner paint before the search takes over the thread.
+    // Two ticks, not one. Building the tables is about a second on its own, so
+    // it gets its own frame and the search gets another - otherwise the spinner
+    // never paints and the whole thing looks like a hang.
     setTimeout(() => {
-      setShortest(buildShortest(state));
-      setComputing(false);
-    }, 60);
+      prepareShortest();
+      setTimeout(() => {
+        setShortest(buildShortest(liveState.current ?? state));
+        setComputing(false);
+      }, 16);
+    }, 32);
   }, [state]);
 
   // -- panels --------------------------------------------------------------
 
   const startStep = useCallback(
-    (st: PlanStep) =>
+    (st: PlanStep) => {
+      const origin = planOrigin.current ?? state;
       startRun(
         {
           id: st.id,
@@ -365,9 +416,10 @@ export default function App() {
           targetSlots: st.targetSlots,
           commitOnClose: true,
         },
-        st.prelude
-      ),
-    [startRun]
+        stepStartState(origin, st)
+      );
+    },
+    [startRun, state]
   );
 
   const panel =
@@ -379,6 +431,8 @@ export default function App() {
         onFillSolved={() => setCubeState(solvedState())}
         onScramble={scramble}
         onClear={() => setCubeState(blankState())}
+        onSolveThis={() => onModeChange('solve')}
+        nudge={paintNudge}
       />
     ) : (
       <SolvePanel
@@ -387,16 +441,17 @@ export default function App() {
         computing={computing}
         onComputeShortest={computeShortest}
         activeStepId={run?.id ?? null}
+        running={!!run}
         onSelectStep={startStep}
         onGoPaint={() => onModeChange('paint')}
         highlightMode={highlightMode}
-        onHighlightMode={setHighlightMode}
+        onHighlightMode={onHighlightMode}
         showPartner={showPartner}
         onShowPartner={setShowPartner}
-        selectedName={selectedName ? titleCase(selectedName) : null}
+        selectedName={selectedName}
         pair={pair}
         stepForSelection={stepForSelection}
-        onClearSelection={() => setSelectedKey(null)}
+        onClearSelection={() => setSelection(null)}
       />
     );
 
@@ -417,18 +472,26 @@ export default function App() {
             onPickSticker={onPickSticker}
             onGestureEnd={anchorToView}
           />
-          {mode === 'solve' && !selectedKey && !run && (
-            <View style={styles.overlay} pointerEvents="none">
-              <Text style={styles.overlayText}>Drag to spin · tap a piece to look it up</Text>
-            </View>
+          {nudgeVisible && !run && (
+            <Animated.View
+              style={[styles.overlay, { opacity: nudgeOpacity }]}
+              pointerEvents="none"
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Text style={styles.overlayText}>
+                {mode === 'paint' ? 'Drag to spin' : 'Tap a piece'}
+              </Text>
+            </Animated.View>
           )}
           {run && <MoveStrip title={run.title} moves={run.moves} step={step} />}
         </View>
         <View
           style={[
             styles.panel,
-            wide ? styles.panelSide : styles.panelBottom,
-            !wide && run ? styles.panelBottomCompact : null,
+            wide
+              ? [styles.panelSide, { width: Math.min(400, Math.max(300, width * 0.38)) }]
+              : [styles.panelBottom, { minHeight: run ? Math.min(200, sheetMin) : sheetMin }],
           ]}
         >
           {panel}
@@ -436,11 +499,11 @@ export default function App() {
       </View>
       {run && (
         <StepBar
-          runId={run.id}
           atStart={step === 0}
           atEnd={step >= run.moves.length}
           playing={playing}
           speedMs={speedMs}
+          position={runPosition}
           onPrev={stepBack}
           onNext={() => {
             setPlaying(false);
@@ -449,7 +512,7 @@ export default function App() {
           onPlayPause={onPlayPause}
           onRestart={restoreBase}
           onSpeed={setSpeedMs}
-          closeLabel={run.commitOnClose ? 'Done' : 'Close'}
+          closeLabel={run.commitOnClose ? 'Keep' : 'Undo'}
           onClose={closeRun}
         />
       )}
@@ -457,32 +520,32 @@ export default function App() {
   );
 }
 
+const { surface, line, text, space, radius } = tokens;
+
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: theme.bg },
+  root: { flex: 1, backgroundColor: surface.canvas },
   body: { flex: 1 },
   bodyRow: { flexDirection: 'row' },
   bodyCol: { flexDirection: 'column' },
   canvasWrap: { flex: 1 },
   overlay: { position: 'absolute', bottom: 14, left: 0, right: 0, alignItems: 'center' },
   overlayText: {
-    color: theme.textDim,
-    fontSize: 12,
-    backgroundColor: '#00000088',
-    paddingHorizontal: 12,
+    ...tokens.type.caption,
+    color: text.secondary,
+    backgroundColor: surface.scrim,
+    paddingHorizontal: space.md,
     paddingVertical: 6,
-    borderRadius: 20,
+    borderRadius: radius.pill,
     overflow: 'hidden',
   },
-  panel: { backgroundColor: theme.panel },
+  panel: { backgroundColor: surface.base },
   panelSide: {
-    width: 340,
     borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: theme.border,
+    borderLeftColor: line.hairline,
   },
-  panelBottomCompact: { height: 230 },
   panelBottom: {
-    height: 320,
+    maxHeight: '56%',
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.border,
+    borderTopColor: line.hairline,
   },
 });

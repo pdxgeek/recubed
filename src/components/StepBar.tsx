@@ -1,20 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { theme } from '../ui/theme';
+import { tokens } from '../ui/theme';
 
 export const SPEEDS = [
-  { label: 'Slow', ms: 1400 },
-  { label: 'Steady', ms: 850 },
-  { label: 'Brisk', ms: 450 },
+  { label: 'Slow', short: '1×', ms: 1400 },
+  { label: 'Steady', short: '2×', ms: 850 },
+  { label: 'Brisk', short: '3×', ms: 450 },
 ];
 
 interface Props {
-  /** Only used to close the speed popover when the run changes. */
-  runId: string;
   atStart: boolean;
   atEnd: boolean;
   playing: boolean;
   speedMs: number;
+  /** Where this step sits in the plan, e.g. "Step 3 of 18". */
+  position?: string | null;
   onPrev: () => void;
   onNext: () => void;
   onPlayPause: () => void;
@@ -24,183 +24,183 @@ interface Props {
   onClose: () => void;
 }
 
-/** Three chevrons, lit up to the chosen speed. */
-function SpeedGlyph({ level }: { level: number }) {
-  return (
-    <View style={styles.glyph}>
-      {[0, 1, 2].map((i) => (
-        <Text key={i} style={[styles.chevron, i <= level && styles.chevronOn]}>
-          {'▸'}
-        </Text>
-      ))}
-    </View>
-  );
-}
-
 export function StepBar({
-  runId,
   atStart,
   atEnd,
   playing,
   speedMs,
+  position,
   onPrev,
   onNext,
   onPlayPause,
   onRestart,
   onSpeed,
-  closeLabel = 'Close',
+  closeLabel = 'Undo',
   onClose,
 }: Props) {
-  const [speedOpen, setSpeedOpen] = useState(false);
-  const speedIndex = Math.max(0, SPEEDS.findIndex((s) => s.ms === speedMs));
-  const speed = SPEEDS[speedIndex];
-
-  useEffect(() => setSpeedOpen(false), [runId]);
-
-  const tap = (fn: () => void) => () => {
-    setSpeedOpen(false);
-    fn();
-  };
-
   return (
-    <View style={styles.bar}>
-      <Pressable
-        onPress={tap(onRestart)}
-        style={styles.icon}
-        accessibilityRole="button"
-        accessibilityLabel="Restart this step"
-      >
-        <Text style={styles.iconText}>{'↺'}</Text>
-      </Pressable>
-
-      <Pressable
-        onPress={tap(onPrev)}
-        style={[styles.icon, atStart && styles.iconOff]}
-        accessibilityRole="button"
-        accessibilityLabel="Previous move"
-      >
-        <Text style={styles.iconText}>{'‹'}</Text>
-      </Pressable>
-
-      <Pressable
-        onPress={tap(onPlayPause)}
-        style={[styles.icon, styles.play]}
-        accessibilityRole="button"
-        accessibilityLabel={playing ? 'Pause' : atEnd ? 'Replay' : 'Play'}
-      >
-        <Text style={[styles.iconText, styles.playText]}>
-          {playing ? '‖' : '▶'}
-        </Text>
-      </Pressable>
-
-      <Pressable
-        onPress={tap(onNext)}
-        style={[styles.icon, atEnd && styles.iconOff]}
-        accessibilityRole="button"
-        accessibilityLabel="Next move"
-      >
-        <Text style={styles.iconText}>{'›'}</Text>
-      </Pressable>
-
-      <View style={styles.speedWrap}>
-        {speedOpen && (
-          <View style={styles.speedMenu}>
-            {SPEEDS.map((s, i) => (
-              <Pressable
-                key={s.label}
-                onPress={() => {
-                  onSpeed(s.ms);
-                  setSpeedOpen(false);
-                }}
-                style={[styles.speedMenuItem, s.ms === speedMs && styles.speedMenuItemOn]}
-              >
-                <SpeedGlyph level={i} />
-                <Text
-                  style={[styles.speedMenuText, s.ms === speedMs && styles.speedMenuTextOn]}
-                >
-                  {s.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
+    <View style={styles.outer}>
+      <View style={styles.head}>
+        <Text style={styles.position}>{position ?? ''}</Text>
         <Pressable
-          onPress={() =>
-            speedOpen
-              ? setSpeedOpen(false)
-              : onSpeed(SPEEDS[(speedIndex + 1) % SPEEDS.length].ms)
-          }
-          onLongPress={() => setSpeedOpen((v) => !v)}
-          delayLongPress={320}
-          style={[styles.icon, speedOpen && styles.iconOn]}
+          onPress={onClose}
+          style={[styles.done, closeLabel === 'Keep' && styles.doneKeep]}
           accessibilityRole="button"
-          accessibilityLabel={`Speed: ${speed.label}`}
-          accessibilityHint="Tap to change speed, hold to pick one"
+          accessibilityLabel={
+            closeLabel === 'Keep'
+              ? 'Keep these moves and close the step'
+              : 'Undo these moves and close the step'
+          }
         >
-          <SpeedGlyph level={speedIndex} />
+          <Text style={[styles.doneText, closeLabel === 'Keep' && styles.doneTextKeep]}>
+            {closeLabel}
+          </Text>
         </Pressable>
       </View>
+      <View style={styles.bar}>
+        <Pressable
+          onPress={onRestart}
+          style={styles.icon}
+          accessibilityRole="button"
+          accessibilityLabel="Restart this step"
+        >
+          <Text style={styles.iconText}>{'↺'}</Text>
+        </Pressable>
 
-      <Pressable onPress={tap(onClose)} style={styles.done} hitSlop={8}>
-        <Text style={styles.doneText}>{closeLabel}</Text>
-      </Pressable>
+        <Pressable
+          onPress={onPrev}
+          disabled={atStart}
+          style={[styles.icon, atStart && styles.iconOff]}
+          accessibilityRole="button"
+          accessibilityLabel="Previous move"
+          accessibilityState={{ disabled: atStart }}
+        >
+          <Text style={styles.iconText}>{'‹'}</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={onPlayPause}
+          style={[styles.icon, styles.play]}
+          accessibilityRole="button"
+          accessibilityLabel={playing ? 'Pause' : atEnd ? 'Replay' : 'Play'}
+        >
+          <Text style={[styles.iconText, styles.playText]}>{playing ? '‖' : '▶'}</Text>
+        </Pressable>
+
+        <Pressable
+          onPress={onNext}
+          disabled={atEnd}
+          style={[styles.icon, atEnd && styles.iconOff]}
+          accessibilityRole="button"
+          accessibilityLabel="Next move"
+          accessibilityState={{ disabled: atEnd }}
+        >
+          <Text style={styles.iconText}>{'›'}</Text>
+        </Pressable>
+
+        {/* A visible three-way control. The popover it replaces did not dismiss
+            on an outside tap, and the tap that failed to dismiss it deselected
+            the user's piece. */}
+        <View style={styles.speed} accessibilityRole="radiogroup">
+          {SPEEDS.map((s) => {
+            const on = s.ms === speedMs;
+            return (
+              <Pressable
+                key={s.label}
+                onPress={() => onSpeed(s.ms)}
+                style={[styles.speedItem, on && styles.speedItemOn]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`${s.label} playback`}
+              >
+                <Text
+                  style={[styles.speedText, on && styles.speedTextOn]}
+                  maxFontSizeMultiplier={1.3}
+                >
+                  {s.short}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
     </View>
   );
 }
 
+const { surface, line, text, accent, space, type, radius, hit } = tokens;
+
 const styles = StyleSheet.create({
+  outer: {
+    backgroundColor: surface.base,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: line.hairline,
+    paddingBottom: space.sm,
+  },
+  head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.gutter,
+    paddingTop: 4,
+  },
+  position: { ...type.overline, color: text.tertiary, textTransform: 'uppercase', flex: 1 },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: theme.panel,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: theme.border,
+    paddingHorizontal: space.gutter,
+    paddingTop: 6,
   },
   icon: {
-    minWidth: 44,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: theme.radius,
+    minWidth: hit.min,
+    minHeight: hit.min,
+    paddingHorizontal: space.sm,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.panelAlt,
+    borderColor: line.outline,
+    backgroundColor: surface.raised,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconOff: { opacity: 0.35 },
-  iconOn: { borderColor: theme.accent, backgroundColor: theme.accentDim },
-  iconText: { color: theme.textDim, fontSize: 15, lineHeight: 19 },
-  play: { borderColor: theme.accent, backgroundColor: theme.accentDim, minWidth: 56 },
-  playText: { color: theme.text },
-  glyph: { flexDirection: 'row', alignItems: 'center' },
-  chevron: { color: '#43434f', fontSize: 13, lineHeight: 19, marginRight: -1 },
-  chevronOn: { color: theme.accent },
-  speedWrap: { marginLeft: 'auto' },
-  speedMenu: {
-    position: 'absolute',
-    bottom: '100%',
-    right: 0,
-    marginBottom: 6,
-    backgroundColor: theme.panelAlt,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: theme.border,
-    paddingVertical: 4,
-    minWidth: 134,
+  iconText: { fontSize: 17, lineHeight: 22, color: text.secondary },
+  play: {
+    borderColor: line.outlineStrong,
+    borderWidth: 2,
+    backgroundColor: accent.soft,
+    minWidth: 64,
+    borderRadius: radius.pill,
   },
-  speedMenuItem: {
+  playText: { color: text.primary },
+
+  speed: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    marginLeft: 'auto',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: line.outline,
+    overflow: 'hidden',
   },
-  speedMenuItemOn: { backgroundColor: theme.accentDim },
-  speedMenuText: { color: theme.textDim, fontSize: 13, fontWeight: '600' },
-  speedMenuTextOn: { color: theme.text },
-  done: { paddingHorizontal: 6, paddingVertical: 8 },
-  doneText: { color: theme.accent, fontSize: 13, fontWeight: '700' },
+  speedItem: {
+    minWidth: hit.min,
+    minHeight: hit.min,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  speedItemOn: { backgroundColor: accent.soft },
+  speedText: { ...type.caption, fontWeight: '700', color: text.tertiary },
+  speedTextOn: { color: text.primary },
+
+  done: {
+    minHeight: hit.min,
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: line.outline,
+  },
+  doneKeep: { backgroundColor: accent.soft, borderColor: accent.base, borderWidth: 2 },
+  doneText: { ...type.caption, fontWeight: '700', color: text.secondary },
+  doneTextKeep: { color: text.primary },
 });

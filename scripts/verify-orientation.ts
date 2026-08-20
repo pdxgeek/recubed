@@ -1,6 +1,7 @@
 /** Checks the 24 whole-cube rotations behave like real rotations. */
 import { FACES, Face, SLOTS, applyAlg, solvedState, CENTER_SLOT } from '../src/cube/core';
-import { ROTATIONS, rotationBringing, rotateCubie, IDENTITY_ROTATION } from '../src/cube/orientation';
+import { ROTATIONS, rotationBringing, rotateCubie, IDENTITY_ROTATION, relabelMoves } from '../src/cube/orientation';
+import { parseAlg, formatAlg, isSolved } from '../src/cube/core';
 
 let fails = 0;
 const check = (name: string, ok: boolean) => {
@@ -60,6 +61,57 @@ check('all 24 holds are reachable', reachable === 24);
 console.log(`ok    every one of the ${reachable} ways to hold the cube has a rotation`);
 
 check('identity rotation changes nothing', FACES.every((f) => IDENTITY_ROTATION.faceMap[f] === f));
+
+// --- a solution survives the cube being re-labelled --------------------------
+//
+// The bug this locks down: one drag threw away a computed solve. A drag only
+// re-labels the cube - the cube itself has not changed - so the moves are
+// rewritten for the new labels instead of being discarded.
+{
+  const scrambles = [
+    "R U R' U' F2 L D L' B2 U'",
+    "D2 F R2 U' L B' R D F2 U",
+    "B L2 U R' F D' R2 U2 L F'",
+  ];
+  let checked = 0;
+  let bad = 0;
+  for (const scramble of scrambles) {
+    const state = applyAlg(solvedState(), scramble);
+    // Any sequence that solves this cube will do; the inverse of the scramble
+    // is one, and it is made of nothing but face turns.
+    const solution = parseAlg(scramble)
+      .map((m) => (m.notation.endsWith('2') ? m.notation : m.notation.endsWith("'") ? m.base : `${m.base}'`))
+      .reverse();
+    const asMoves = parseAlg(solution.join(' '));
+    if (!isSolved(applyAlg(state, asMoves))) {
+      bad++;
+      console.log(`FAIL  the test's own solution does not solve ${scramble}`);
+      continue;
+    }
+    for (const rot of ROTATIONS) {
+      const relabelled = relabelMoves(rot, asMoves);
+      checked++;
+      if (!relabelled) {
+        bad++;
+        console.log(`FAIL  could not re-label ${formatAlg(asMoves)} through "${rot.alg}"`);
+        continue;
+      }
+      const held = rot.alg ? applyAlg(state, rot.alg) : state;
+      if (!isSolved(applyAlg(held, relabelled))) {
+        bad++;
+        console.log(`FAIL  re-labelled solution does not solve the re-labelled cube ("${rot.alg}")`);
+      }
+    }
+  }
+  if (bad === 0) {
+    console.log(`ok    a solution still solves the cube after all ${checked} re-labellings`);
+  } else {
+    fails += bad;
+  }
+  // Slice moves and whole-cube rotations are refused rather than mangled.
+  check('a sequence that is not plain face turns is refused',
+    relabelMoves(ROTATIONS[1], parseAlg("M2 U M2")) === null);
+}
 
 console.log(fails === 0 ? '\nORIENTATIONS OK' : `\n${fails} FAILURES`);
 process.exit(fails ? 1 : 0);

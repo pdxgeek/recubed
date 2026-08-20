@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
 import { HighlightMode, PiecePair } from '../cube/pieces';
-import { theme } from '../ui/theme';
+import { tokens } from '../ui/theme';
 
 interface Props {
   plan: SolvePlan;
@@ -10,6 +10,8 @@ interface Props {
   computing: boolean;
   onComputeShortest: () => void;
   activeStepId: string | null;
+  /** True while a step is being played, when the panel gets out of the way. */
+  running: boolean;
   onSelectStep: (step: PlanStep) => void;
   onGoPaint: () => void;
   highlightMode: HighlightMode;
@@ -24,12 +26,28 @@ interface Props {
   onClearSelection: () => void;
 }
 
+const MODE_LABEL: Record<HighlightMode, string> = {
+  piece: 'Where does it go?',
+  location: 'What goes here?',
+};
+
+/** A labelled dot, so the highlight colours are named rather than described. */
+function LegendRow({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
 export function SolvePanel({
   plan,
   shortest,
   computing,
   onComputeShortest,
   activeStepId,
+  running,
   onSelectStep,
   onGoPaint,
   highlightMode,
@@ -41,12 +59,28 @@ export function SolvePanel({
   stepForSelection,
   onClearSelection,
 }: Props) {
+  const list = useRef<ScrollView>(null);
+  const stepY = useRef<Record<string, number>>({});
+
+  // Bring the running step into view: with the step bar on screen the list is
+  // only a couple of rows tall, and the active card used to be clipped by it.
+  useEffect(() => {
+    if (!activeStepId) return;
+    const y = stepY.current[activeStepId];
+    if (y !== undefined) list.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
+  }, [activeStepId]);
+
   if (!plan.ok) {
     return (
       <View style={styles.wrap}>
         <Text style={styles.title}>That cube can’t exist</Text>
         <Text style={styles.problem}>{plan.error}</Text>
-        <Pressable onPress={onGoPaint} style={styles.primary}>
+        <Pressable
+          onPress={onGoPaint}
+          style={styles.primary}
+          accessibilityRole="button"
+          accessibilityLabel="Back to the colours"
+        >
           <Text style={styles.primaryText}>Back to the colours</Text>
         </Pressable>
       </View>
@@ -57,10 +91,15 @@ export function SolvePanel({
     return (
       <View style={styles.wrap}>
         <Text style={styles.title}>Solved</Text>
-        <Text style={styles.hint}>
-          Nothing left to do. Paint in a scramble and the ways to solve it will show up here.
+        <Text style={styles.emptySub}>
+          Nothing left to do. Paint in a scramble and the ways to solve it show up here.
         </Text>
-        <Pressable onPress={onGoPaint} style={styles.primary}>
+        <Pressable
+          onPress={onGoPaint}
+          style={styles.primary}
+          accessibilityRole="button"
+          accessibilityLabel="Set the colours"
+        >
           <Text style={styles.primaryText}>Set the colours</Text>
         </Pressable>
       </View>
@@ -71,91 +110,112 @@ export function SolvePanel({
     .map((m) => (m.id === 'shortest' && shortest ? shortest : m))
     .sort((a, b) => a.level - b.level);
 
-  return (
-    <View style={styles.wrap}>
-      <View style={styles.modes}>
-        {(['piece', 'location'] as HighlightMode[]).map((m) => (
-          <Pressable
-            key={m}
-            onPress={() => onHighlightMode(m)}
-            style={[styles.mode, highlightMode === m && styles.modeOn]}
-          >
-            <Text style={[styles.modeText, highlightMode === m && styles.modeTextOn]}>
-              {m === 'piece' ? 'Tap a piece' : 'Tap a slot'}
-            </Text>
-          </Pressable>
-        ))}
+  const selectionCard = selectedName ? (
+    <View style={styles.picked}>
+      <View style={styles.pickedHead}>
+        <Text style={styles.pickedName} numberOfLines={2}>
+          {selectedName}
+        </Text>
         <Pressable
-          onPress={() => onShowPartner(!showPartner)}
-          style={[styles.partnerToggle, showPartner && styles.partnerToggleOn]}
+          onPress={onClearSelection}
+          style={styles.clear}
+          accessibilityRole="button"
+          accessibilityLabel={`Clear selection: ${selectedName}`}
         >
-          <View style={[styles.partnerDot, !showPartner && styles.partnerDotOff]} />
-          <Text style={[styles.modeText, showPartner && styles.modeTextOn]}>Pair</Text>
+          <Text style={styles.clearText}>Clear</Text>
         </Pressable>
       </View>
 
-      {selectedName ? (
-        <View style={styles.picked}>
-          <View style={styles.pickedHead}>
-            <Text style={styles.pickedName}>{selectedName}</Text>
-            <Pressable onPress={onClearSelection} hitSlop={8}>
-              <Text style={styles.clearText}>Clear</Text>
-            </Pressable>
-          </View>
-          {pair?.reason ? (
-            <Text style={styles.pickedNote}>{pair.reason}</Text>
-          ) : pair?.atHome ? (
-            <Text style={styles.pickedNote}>Already where it belongs. Nothing to do for it.</Text>
-          ) : (
-            <Text style={styles.pickedNote}>
-              {highlightMode === 'piece'
-                ? 'White is the piece, amber is the slot it has to reach.'
-                : 'White is the slot, amber is the piece that has to reach it.'}
-            </Text>
-          )}
-          {stepForSelection ? (
-            <Pressable onPress={() => onSelectStep(stepForSelection)} style={styles.primary}>
-              <Text style={styles.primaryText}>Show me how to get it there</Text>
-            </Pressable>
-          ) : (
-            !pair?.atHome && (
-              <Text style={styles.pickedNote}>
-                This one falls into place while the rest of the cube is solved - work down the
-                list below.
-              </Text>
-            )
-          )}
-        </View>
+      {pair?.reason ? (
+        <Text style={styles.pickedNote}>{pair.reason}</Text>
+      ) : pair?.atHome ? (
+        <Text style={styles.pickedNote}>Already where it belongs. Nothing to do for it.</Text>
       ) : (
-        <Text style={styles.hint}>
-          Tap any piece on the cube to see where it has to go and how to get it there, or work
-          down the list: everything still to do, gentlest method first.
-        </Text>
+        <View style={styles.legend}>
+          <LegendRow
+            color={cube.selected}
+            label={highlightMode === 'piece' ? 'this piece' : 'this slot'}
+          />
+          {/* The target highlight is switched on and off where it is explained,
+              rather than from a control called "Pair" at the top of the panel. */}
+          <Pressable
+            onPress={() => onShowPartner(!showPartner)}
+            style={styles.legendSwitch}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: showPartner }}
+            accessibilityLabel="Show where it goes"
+          >
+            <View
+              style={[
+                styles.legendDot,
+                showPartner ? { backgroundColor: cube.target } : styles.legendDotOff,
+              ]}
+            />
+            <Text style={[styles.legendText, !showPartner && styles.legendTextOff]}>
+              {highlightMode === 'piece' ? 'where it goes' : 'the piece that goes there'}
+            </Text>
+            <Text style={styles.legendAction}>{showPartner ? 'Hide' : 'Show'}</Text>
+          </Pressable>
+        </View>
       )}
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+
+      <Pressable
+        onPress={() => stepForSelection && onSelectStep(stepForSelection)}
+        disabled={!stepForSelection}
+        style={[styles.primary, !stepForSelection && styles.primaryOff]}
+        accessibilityRole="button"
+        accessibilityLabel="Show me how to get it there"
+        accessibilityState={{ disabled: !stepForSelection }}
+        accessibilityHint={
+          stepForSelection ? undefined : 'No step for this one yet — it settles as the layers go in'
+        }
+      >
+        <Text style={[styles.primaryText, !stepForSelection && styles.primaryTextOff]}>
+          {stepForSelection ? 'Show me how to get it there' : 'It settles as the layers go in'}
+        </Text>
+      </Pressable>
+    </View>
+  ) : (
+    <View style={styles.empty} accessibilityRole="summary">
+      <Text style={styles.emptyGlyph}>◇</Text>
+      <Text style={styles.emptyTitle}>Tap a piece on the cube</Text>
+      <Text style={styles.emptySub}>to see where it goes</Text>
+    </View>
+  );
+
+  return (
+    <View style={styles.wrap}>
+      {!running && selectionCard}
+
+      <ScrollView ref={list} style={styles.list} contentContainerStyle={styles.listContent}>
         {methods.map((method) => (
           <View key={method.id} style={styles.method}>
             <View style={styles.methodHead}>
               <Text style={styles.methodTitle}>{method.title}</Text>
               {method.totalMoves > 0 && (
-                <Text style={styles.methodCount}>{method.totalMoves} moves</Text>
+                <Text style={styles.methodCount}>
+                  {method.totalMoves} moves · {method.steps.length} steps
+                </Text>
               )}
             </View>
-            <Text style={styles.methodSub}>{method.subtitle}</Text>
+            {method.steps.length === 0 && <Text style={styles.methodSub}>{method.subtitle}</Text>}
 
             {method.id === 'shortest' && !shortest && (
               <Pressable
                 onPress={onComputeShortest}
                 disabled={computing}
-                style={[styles.primary, computing && styles.primaryBusy]}
+                style={[styles.secondary, computing && styles.primaryBusy]}
+                accessibilityRole="button"
+                accessibilityLabel="Work out the shortest solve"
+                accessibilityState={{ disabled: computing, busy: computing }}
               >
                 {computing ? (
                   <View style={styles.busyRow}>
-                    <ActivityIndicator size="small" color={theme.text} />
-                    <Text style={styles.primaryText}>Searching…</Text>
+                    <ActivityIndicator size="small" color={text.primary} />
+                    <Text style={styles.secondaryText}>Searching…</Text>
                   </View>
                 ) : (
-                  <Text style={styles.primaryText}>Work out the shortest solve</Text>
+                  <Text style={styles.secondaryText}>Work out the shortest solve</Text>
                 )}
               </Pressable>
             )}
@@ -164,19 +224,40 @@ export function SolvePanel({
               const on = step.id === activeStepId;
               const newGroup = i === 0 || method.steps[i - 1].group !== step.group;
               return (
-                <View key={step.id}>
+                <View
+                  key={step.id}
+                  onLayout={(e) => {
+                    stepY.current[step.id] = e.nativeEvent.layout.y;
+                  }}
+                >
                   {newGroup && <Text style={styles.group}>{step.group}</Text>}
                   <Pressable
                     onPress={() => onSelectStep(step)}
                     style={[styles.step, on && styles.stepOn]}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    accessibilityLabel={`${step.title}, ${step.moves.length} moves${
+                      step.algorithm ? `, ${step.algorithm}` : ''
+                    }`}
                   >
-                    <View style={styles.stepHead}>
-                      <Text style={[styles.stepTitle, on && styles.stepTitleOn]}>{step.title}</Text>
-                      <Text style={styles.stepCount}>{step.moves.length}</Text>
+                    <View style={[styles.rail, on && styles.railOn]} />
+                    <View style={styles.stepBody}>
+                      <View style={styles.stepHead}>
+                        <Text style={[styles.stepTitle, on && styles.stepTitleOn]} numberOfLines={1}>
+                          {on ? '▸ ' : ''}
+                          {step.title}
+                        </Text>
+                        <Text style={styles.stepCount}>{step.moves.length}</Text>
+                        <Text style={styles.chevron}>›</Text>
+                      </View>
+                      <View style={styles.stepMeta}>
+                        <Text style={styles.notation} numberOfLines={on ? undefined : 1}>
+                          {step.notation}
+                        </Text>
+                        {step.algorithm && <Text style={styles.tag}>{step.algorithm}</Text>}
+                      </View>
+                      {on && <Text style={styles.stepDetail}>{step.detail}</Text>}
                     </View>
-                    <Text style={styles.notation}>{step.notation}</Text>
-                    {step.algorithm && <Text style={styles.tag}>{step.algorithm}</Text>}
-                    <Text style={styles.stepDetail}>{step.detail}</Text>
                   </Pressable>
                 </View>
               );
@@ -184,114 +265,199 @@ export function SolvePanel({
           </View>
         ))}
       </ScrollView>
+
+      {!running && (
+        <View style={styles.modes} accessibilityRole="radiogroup">
+          {(['piece', 'location'] as HighlightMode[]).map((m) => {
+            const on = highlightMode === m;
+            return (
+              <Pressable
+                key={m}
+                onPress={() => onHighlightMode(m)}
+                style={[styles.mode, on && styles.modeOn]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={MODE_LABEL[m]}
+              >
+                <Text style={[styles.modeText, on && styles.modeTextOn]} numberOfLines={1}>
+                  {MODE_LABEL[m]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
     </View>
   );
 }
 
+const { surface, line, text, accent, status, cube, space, type, radius, hit } = tokens;
+
 const styles = StyleSheet.create({
-  wrap: { flex: 1, paddingHorizontal: 14, paddingTop: 12, gap: 8 },
-  title: { color: theme.text, fontSize: 15, fontWeight: '700' },
-  hint: { color: theme.textDim, fontSize: 12, lineHeight: 17 },
-  modes: { flexDirection: 'row', gap: 6, alignItems: 'center' },
-  mode: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+  wrap: { flex: 1, paddingHorizontal: space.gutter, paddingTop: space.md, gap: space.sm },
+  title: { ...type.title, color: text.primary },
+
+  // -- selection ------------------------------------------------------------
+  picked: {
+    backgroundColor: surface.raised,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: theme.border,
-    backgroundColor: theme.panelAlt,
+    borderColor: line.hairline,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    gap: space.xs,
   },
-  modeOn: { borderColor: theme.accent, backgroundColor: theme.accentDim },
-  modeText: { color: theme.textDim, fontSize: 11, fontWeight: '600' },
-  modeTextOn: { color: theme.text },
-  partnerToggle: {
+  pickedHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  pickedName: { ...type.heading, color: text.primary, flex: 1 },
+  clear: {
+    minHeight: hit.min,
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: line.outline,
+  },
+  clearText: { ...type.caption, fontWeight: '600', color: text.secondary },
+  pickedNote: { ...type.caption, color: text.secondary },
+  legend: { gap: space.xs },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: 22 },
+  legendSwitch: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginLeft: 'auto',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.border,
+    gap: space.sm,
+    minHeight: hit.min,
   },
-  partnerToggleOn: { borderColor: theme.warn },
-  partnerDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: theme.warn },
-  partnerDotOff: { backgroundColor: theme.border },
-  picked: {
-    backgroundColor: theme.panelAlt,
-    borderRadius: theme.radius,
-    borderWidth: 1,
-    borderColor: theme.border,
-    padding: 10,
-    gap: 6,
-  },
-  pickedHead: { flexDirection: 'row', alignItems: 'center' },
-  pickedName: { color: theme.text, fontSize: 14, fontWeight: '700', flex: 1 },
-  pickedNote: { color: theme.textDim, fontSize: 11, lineHeight: 16 },
-  clearText: { color: theme.accent, fontSize: 12, fontWeight: '600' },
-  problem: {
-    color: theme.warn,
-    fontSize: 13,
-    lineHeight: 19,
-    backgroundColor: '#2a1f10',
-    borderRadius: theme.radius,
-    padding: 10,
-  },
-  list: { flex: 1, marginHorizontal: -4 },
-  listContent: { paddingHorizontal: 4, paddingBottom: 24 },
-  method: { marginTop: 12 },
-  methodHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  methodTitle: { color: theme.text, fontSize: 13, fontWeight: '700', flex: 1 },
-  methodCount: { color: theme.textDim, fontSize: 11, fontVariant: ['tabular-nums'] },
-  methodSub: { color: theme.textDim, fontSize: 11, lineHeight: 16, marginBottom: 8 },
-  group: {
-    color: theme.textDim,
-    fontSize: 10,
+  legendAction: {
+    ...type.caption,
     fontWeight: '700',
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-    marginTop: 10,
-    marginBottom: 5,
+    color: accent.base,
+    marginLeft: 'auto',
   },
-  notation: { color: theme.text, fontSize: 12, fontFamily: 'Menlo', lineHeight: 17 },
+  legendTextOff: { color: text.tertiary },
+  legendDotOff: { backgroundColor: 'transparent', borderColor: line.outline },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: surface.chipRim,
+  },
+  legendText: { ...type.caption, color: text.secondary },
+
+  empty: {
+    height: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: line.hairline,
+  },
+  emptyGlyph: { fontSize: 24, lineHeight: 28, color: text.tertiary },
+  emptyTitle: { ...type.body, color: text.secondary },
+  emptySub: { ...type.caption, color: text.tertiary },
+
+  // -- list -----------------------------------------------------------------
+  list: { flex: 1, marginHorizontal: -4 },
+  listContent: { paddingHorizontal: 4, paddingBottom: 72 },
+  method: { marginTop: space.md },
+  methodHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  methodTitle: { ...type.heading, color: text.primary, flex: 1 },
+  methodCount: { ...type.caption, ...tokens.numeric, color: text.tertiary },
+  methodSub: { ...type.caption, color: text.tertiary, marginTop: space.xs, marginBottom: space.sm },
+  group: {
+    ...type.overline,
+    color: text.tertiary,
+    textTransform: 'uppercase',
+    marginTop: space.md,
+    marginBottom: 6,
+  },
   step: {
-    backgroundColor: theme.panelAlt,
-    borderRadius: theme.radius,
+    flexDirection: 'row',
+    backgroundColor: surface.raised,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: 'transparent',
-    padding: 10,
-    marginBottom: 6,
-    gap: 4,
-  },
-  stepOn: { borderColor: theme.accent, backgroundColor: theme.accentDim },
-  stepHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  stepTitle: { color: theme.textDim, fontSize: 13, fontWeight: '700', flex: 1 },
-  stepTitleOn: { color: theme.text },
-  stepCount: { color: theme.textDim, fontSize: 11, fontVariant: ['tabular-nums'] },
-  stepDetail: { color: theme.textDim, fontSize: 11, lineHeight: 16 },
-  tag: {
-    alignSelf: 'flex-start',
-    color: theme.accent,
-    fontSize: 10,
-    fontWeight: '600',
-    borderWidth: 1,
-    borderColor: theme.accentDim,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    marginBottom: space.sm,
     overflow: 'hidden',
   },
-  primary: {
-    backgroundColor: theme.accentDim,
-    borderWidth: 1,
-    borderColor: theme.accent,
-    borderRadius: theme.radius,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginBottom: 8,
+  stepOn: { borderColor: accent.base, backgroundColor: accent.soft },
+  rail: { width: 3, backgroundColor: 'transparent' },
+  railOn: { backgroundColor: accent.base },
+  stepBody: { flex: 1, paddingVertical: space.md, paddingHorizontal: 14, gap: space.xs },
+  stepHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  stepTitle: { ...type.body, fontWeight: '600', color: text.secondary, flex: 1 },
+  stepTitleOn: { color: text.primary },
+  stepCount: { ...type.caption, ...tokens.numeric, color: text.tertiary },
+  chevron: { ...type.heading, color: text.tertiary },
+  stepMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  notation: { ...type.mono, color: text.primary, flex: 1 },
+  stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
+  tag: {
+    ...type.overline,
+    color: text.primary,
+    backgroundColor: accent.soft,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    overflow: 'hidden',
   },
+
+  // -- mode footer ----------------------------------------------------------
+  modes: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    paddingBottom: space.md,
+  },
+  mode: {
+    flex: 1,
+    minHeight: hit.min,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: space.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: line.outline,
+    backgroundColor: surface.raised,
+  },
+  modeOn: { borderWidth: 2, borderColor: accent.base, backgroundColor: accent.soft },
+  modeText: { ...type.caption, fontWeight: '600', color: text.secondary },
+  modeTextOn: { color: text.primary },
+
+  // -- buttons --------------------------------------------------------------
+  primary: {
+    minHeight: hit.large,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: accent.soft,
+    borderWidth: 2,
+    borderColor: accent.base,
+    borderRadius: radius.md,
+    paddingHorizontal: space.md,
+  },
+  primaryOff: { backgroundColor: 'transparent', borderWidth: 1, borderColor: line.hairline },
   primaryBusy: { opacity: 0.7 },
-  primaryText: { color: theme.text, fontSize: 13, fontWeight: '600' },
-  busyRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  primaryText: { ...type.heading, color: text.primary, textAlign: 'center' },
+  primaryTextOff: { ...type.caption, color: text.tertiary },
+  secondary: {
+    minHeight: hit.min,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: line.outline,
+    borderRadius: radius.md,
+    marginBottom: space.sm,
+  },
+  secondaryText: { ...type.caption, fontWeight: '600', color: text.secondary },
+  busyRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+
+  problem: {
+    ...type.caption,
+    color: status.warn,
+    backgroundColor: status.warnSoft,
+    borderRadius: radius.md,
+    padding: space.md,
+    overflow: 'hidden',
+  },
 });
