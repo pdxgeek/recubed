@@ -23,6 +23,24 @@ interface Props {
    * panel, so nothing a screen reader or a test knows about moves.
    */
   variant?: 'full' | 'compact';
+  /**
+   * True on a window under 700pt tall, where the two-row colour grid does not
+   * fit alongside everything below it.
+   *
+   * Measured on an iPhone SE with all 48 stickers painted: the action row sat
+   * at y 660-704 in a 667pt window, and `document.scrollHeight` was 716. On the
+   * web target the document scrolls and the buttons are merely below the fold;
+   * on a device the root View does not scroll and they are gone - `Scramble`,
+   * which the panel's own framing line tells you to tap, and `Start over`,
+   * which is the only way out of an impossible cube. Following the instruction
+   * is what pushes them off, because completing the cube adds the 56pt
+   * "Solve this cube" primary above them.
+   *
+   * The compact swatch row this switches to is 44pt against the grid's 154, and
+   * it is not a new component: it is the one the Flat view already uses, with
+   * every label unchanged.
+   */
+  short?: boolean;
 }
 
 /** 48 of the 54 stickers are paintable; the six centres are fixed. */
@@ -53,6 +71,7 @@ export function PaintPanel({
   onSolveThis,
   nudge,
   variant = 'full',
+  short = false,
 }: Props) {
   const { counts, blank, painted } = tally(state);
   const complete = painted === PAINTABLE.length;
@@ -115,62 +134,69 @@ export function PaintPanel({
     </View>
   );
 
+  /**
+   * The 44pt colour row. `withErase` because the full panel already has an
+   * "Erase N" control in its header, and two radios with the same label in the
+   * same group is a worse answer than one.
+   */
+  const swatchRow = (withErase: boolean, hint: string) => (
+    <View style={styles.swatchRow} accessibilityRole="radiogroup" accessibilityLabel="Sticker colour">
+      {withErase && (
+        <Pressable
+          onPress={() => onActive(null)}
+          style={[styles.swatch, styles.swatchErase, active === null && styles.swatchOn]}
+          accessibilityRole="radio"
+          accessibilityState={{ selected: active === null }}
+          aria-checked={active === null}
+          accessibilityLabel={`Erase, ${blank} stickers blank`}
+        >
+          <Text style={styles.swatchEraseLetter} maxFontSizeMultiplier={1.3}>
+            ⌫
+          </Text>
+        </Pressable>
+      )}
+      {COLOR_IDS.map((c) => {
+        const n = counts[c];
+        const on = active === c;
+        const tooMany = n > 9;
+        return (
+          <Pressable
+            key={c}
+            onPress={() => onActive(c)}
+            style={[
+              styles.swatch,
+              { backgroundColor: COLOR_HEX[c] },
+              on && styles.swatchOn,
+              tooMany && styles.swatchBad,
+            ]}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: on }}
+            aria-checked={on}
+            accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
+            accessibilityHint={hint}
+          >
+            <Text
+              style={[styles.swatchLetter, { color: inkOn(COLOR_HEX[c]) }]}
+              maxFontSizeMultiplier={1.3}
+            >
+              {c}
+            </Text>
+            <Text
+              style={[styles.swatchCount, { color: inkOn(COLOR_HEX[c]) }]}
+              maxFontSizeMultiplier={1.2}
+            >
+              {n}/9
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+
   if (variant === 'compact') {
     return (
       <View style={styles.compact}>
-        <View
-          style={styles.swatchRow}
-          accessibilityRole="radiogroup"
-          accessibilityLabel="Sticker colour"
-        >
-          <Pressable
-            onPress={() => onActive(null)}
-            style={[styles.swatch, styles.swatchErase, active === null && styles.swatchOn]}
-            accessibilityRole="radio"
-            accessibilityState={{ selected: active === null }}
-            aria-checked={active === null}
-            accessibilityLabel={`Erase, ${blank} stickers blank`}
-          >
-            <Text style={styles.swatchEraseLetter} maxFontSizeMultiplier={1.3}>
-              ⌫
-            </Text>
-          </Pressable>
-          {COLOR_IDS.map((c) => {
-            const n = counts[c];
-            const on = active === c;
-            const tooMany = n > 9;
-            return (
-              <Pressable
-                key={c}
-                onPress={() => onActive(c)}
-                style={[
-                  styles.swatch,
-                  { backgroundColor: COLOR_HEX[c] },
-                  on && styles.swatchOn,
-                  tooMany && styles.swatchBad,
-                ]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: on }}
-                aria-checked={on}
-                accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
-                accessibilityHint="Then tap stickers on the net"
-              >
-                <Text
-                  style={[styles.swatchLetter, { color: inkOn(COLOR_HEX[c]) }]}
-                  maxFontSizeMultiplier={1.3}
-                >
-                  {c}
-                </Text>
-                <Text
-                  style={[styles.swatchCount, { color: inkOn(COLOR_HEX[c]) }]}
-                  maxFontSizeMultiplier={1.2}
-                >
-                  {n}/9
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        {swatchRow(true, 'Then tap stickers on the net')}
         {actionRow(true)}
       </View>
     );
@@ -218,45 +244,54 @@ export function PaintPanel({
         </Text>
       </View>
 
-      <View style={styles.grid} accessibilityRole="radiogroup" accessibilityLabel="Sticker colour">
-        {COLOR_IDS.map((c) => {
-          const n = counts[c];
-          const on = active === c;
-          const tooMany = n > 9;
-          return (
-            <Pressable
-              key={c}
-              onPress={() => onActive(c)}
-              style={[styles.tile, on && styles.tileOn, tooMany && styles.tileBad]}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: on }}
-              aria-checked={on}
-              accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
-              accessibilityHint="Then tap stickers on the cube"
-            >
-              <View style={[styles.bar, { backgroundColor: COLOR_HEX[c] }]}>
-                <Text
-                  style={[styles.letter, { color: inkOn(COLOR_HEX[c]) }]}
-                  maxFontSizeMultiplier={1.4}
-                >
-                  {c}
-                </Text>
-              </View>
-              <View style={styles.tileFoot}>
-                <Text style={[styles.tileName, on && styles.tileNameOn]} numberOfLines={1}>
-                  {COLOR_NAME[c]}
-                </Text>
-                <Text
-                  style={[styles.count, n === 9 && styles.countOk, tooMany && styles.countBad]}
-                  maxFontSizeMultiplier={1.4}
-                >
-                  {n}/9{n === 9 ? ' ✓' : tooMany ? ' !' : ''}
-                </Text>
-              </View>
-            </Pressable>
-          );
-        })}
-      </View>
+      {/* On a short window the two-row grid is 154pt the panel does not have:
+          at 375x667 with all 48 painted it pushed the action row to y 660-704
+          of a 667pt window, which on a device is off the screen rather than
+          below the fold. The compact row is 44pt and every label on it is the
+          same label. */}
+      {short ? (
+        swatchRow(false, 'Then tap stickers on the cube')
+      ) : (
+        <View style={styles.grid} accessibilityRole="radiogroup" accessibilityLabel="Sticker colour">
+          {COLOR_IDS.map((c) => {
+            const n = counts[c];
+            const on = active === c;
+            const tooMany = n > 9;
+            return (
+              <Pressable
+                key={c}
+                onPress={() => onActive(c)}
+                style={[styles.tile, on && styles.tileOn, tooMany && styles.tileBad]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                aria-checked={on}
+                accessibilityLabel={`${COLOR_NAME[c]}, ${n} of 9${tooMany ? ', too many' : n === 9 ? ', complete' : ''}`}
+                accessibilityHint="Then tap stickers on the cube"
+              >
+                <View style={[styles.bar, { backgroundColor: COLOR_HEX[c] }]}>
+                  <Text
+                    style={[styles.letter, { color: inkOn(COLOR_HEX[c]) }]}
+                    maxFontSizeMultiplier={1.4}
+                  >
+                    {c}
+                  </Text>
+                </View>
+                <View style={styles.tileFoot}>
+                  <Text style={[styles.tileName, on && styles.tileNameOn]} numberOfLines={1}>
+                    {COLOR_NAME[c]}
+                  </Text>
+                  <Text
+                    style={[styles.count, n === 9 && styles.countOk, tooMany && styles.countBad]}
+                    maxFontSizeMultiplier={1.4}
+                  >
+                    {n}/9{n === 9 ? ' ✓' : tooMany ? ' !' : ''}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
 
       {nudge ? (
         <Text style={styles.nudge} accessibilityLiveRegion="polite">

@@ -577,6 +577,7 @@ export default function App() {
         onSolveThis={() => onModeChange('solve')}
         nudge={paintNudge}
         variant={flatPaint ? 'compact' : 'full'}
+        short={short}
       />
     ) : (
       <SolvePanel

@@ -291,18 +291,29 @@ export function SolvePanel({
                   }}
                 >
                   {newGroup && <Text style={styles.group}>{step.group}</Text>}
-                  <Pressable
-                    onPress={() => onSelectStep(step)}
-                    style={[styles.step, on && styles.stepOn]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: on }}
-                    aria-selected={on}
-                    accessibilityLabel={`${step.title}, ${step.moves.length} moves${
-                      step.algorithm ? `, ${step.algorithm}` : ''
-                    }`}
-                  >
+                  {/* The row and its `?` are SIBLINGS, not one inside the
+                      other. A Pressable inside a Pressable is invalid on web -
+                      React logs the nesting - and on iOS the row's
+                      `accessibilityRole` sets `accessible={true}`, which merges
+                      every child into one accessibility element: the `?` would
+                      have been unreachable to VoiceOver, which is exactly the
+                      audience the round-3 accessibility work was for. The `?`
+                      is absolutely positioned so nothing about the layout
+                      changes - `space.md` is the body's own top padding and
+                      `space.sm` its own negative margin, so it lands where it
+                      has always landed. */}
+                  <View style={[styles.step, on && styles.stepOn]}>
                     <View style={[styles.rail, on && styles.railOn]} />
-                    <View style={styles.stepBody}>
+                    <Pressable
+                      onPress={() => onSelectStep(step)}
+                      style={styles.stepBody}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      aria-selected={on}
+                      accessibilityLabel={`${step.title}, ${step.moves.length} moves${
+                        step.algorithm ? `, ${step.algorithm}` : ''
+                      }`}
+                    >
                       <View style={styles.stepHead}>
                         {/* The marker carries "running"; the row keeps its name.
                             It used to read "▸ Running", so the moment a step
@@ -312,22 +323,9 @@ export function SolvePanel({
                           {on ? `▸ ${step.title}` : step.title}
                         </Text>
                         <Text style={styles.stepCount}>{step.moves.length}</Text>
-                        {/* Every row, not only the running one. Gating the
-                            explanation on playback meant a learner could not ask
-                            why anything worked until they had committed to
-                            watching it. A 44pt target, which the 36pt text link
-                            it replaces was not - and it costs the card no
-                            height, because it sits in a row that already
-                            existed. */}
-                        <Pressable
-                          onPress={() => onExplain(step)}
-                          style={styles.why}
-                          accessibilityRole="button"
-                          accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
-                          accessibilityHint="Explains what these moves do to the cube"
-                        >
-                          <Text style={styles.whyText}>?</Text>
-                        </Pressable>
+                        {/* Keeps the title and the count clear of the `?`,
+                            which is out of flow above them. */}
+                        <View style={styles.whyGap} />
                       </View>
                       <View style={styles.stepMeta}>
                         {!on && (
@@ -352,8 +350,23 @@ export function SolvePanel({
                       {on && !practising && (
                         <Notation moves={step.moves} variant="blocks" rawBelow={4} />
                       )}
-                    </View>
-                  </Pressable>
+                    </Pressable>
+                    {/* Every row, not only the running one. Gating the
+                        explanation on playback meant a learner could not ask why
+                        anything worked until they had committed to watching it.
+                        A 44pt target, which the 36pt text link it replaces was
+                        not - and it costs the card no height, because it is out
+                        of flow over a row that already existed. */}
+                    <Pressable
+                      onPress={() => onExplain(step)}
+                      style={styles.why}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
+                      accessibilityHint="Explains what these moves do to the cube"
+                    >
+                      <Text style={styles.whyText}>?</Text>
+                    </Pressable>
+                  </View>
                 </View>
               );
             })}
@@ -497,16 +510,24 @@ const styles = StyleSheet.create({
   stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
   // A real 44pt target, and square, so it reads as a button rather than as the
   // decorative chevron it replaces.
+  // Out of flow, over the head line of the row it belongs to. `top` is the
+  // body's own vertical padding less what the old negative margin took, so the
+  // button is where it has always been - the change is that it is no longer a
+  // Pressable inside a Pressable.
   why: {
+    position: 'absolute',
+    right: 14,
+    top: space.md - space.sm,
     minWidth: hit.min,
     minHeight: hit.min,
-    marginVertical: -space.sm,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: line.outline,
   },
+  /** The space the absolutely-positioned `?` needs kept clear in the head row. */
+  whyGap: { width: hit.min },
   whyText: { ...type.heading, fontWeight: '700', color: accent.base },
   tag: {
     ...type.overline,

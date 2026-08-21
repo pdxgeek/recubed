@@ -254,6 +254,72 @@ try {
       `scramble=${scramble} solved=${solved} clear=${clear}`
     );
     check('and the primary appears alongside them', solveThis === 1, `${solveThis}`);
+
+    // 3b. ...and they are ON THE SCREEN, on the smallest phone the app supports.
+    //
+    // The web target scrolls the document, so a button pushed past the bottom
+    // is merely below the fold; the native root View does not scroll, so it is
+    // simply gone. Measured at 375x667 with all 48 painted, the action row sat
+    // at y 660-704 of a 667pt window and `document.scrollHeight` was 716 -
+    // and following the panel's own "tap Scramble to practise on a random
+    // cube" is what pushed it there, because completing the cube adds the
+    // "Solve this cube" primary above it.
+    //
+    // So this asserts what a device would enforce: nothing below the fold, and
+    // no document taller than the window.
+    for (const [w, h] of [
+      [375, 667],
+      [390, 844],
+    ]) {
+      await page.setViewportSize({ width: w, height: h });
+      await sleep(900);
+      const fold = await page.evaluate(() => {
+        const wanted = [
+          'Fill in a random scramble',
+          'Fill in a solved cube',
+          'Clear every sticker',
+          'Solve this cube',
+        ];
+        const out = [];
+        for (const label of wanted) {
+          const n = document.querySelector(`[aria-label="${label}"]`);
+          if (!n) continue;
+          const r = n.getBoundingClientRect();
+          out.push({ label, bottom: Math.round(r.bottom), top: Math.round(r.top) });
+        }
+        return {
+          controls: out,
+          window: window.innerHeight,
+          scrollHeight: document.documentElement.scrollHeight,
+        };
+      });
+      const off = fold.controls.filter((c) => c.bottom > fold.window + 1);
+      check(
+        `${w}x${h} paint, all 48: every action is above the fold`,
+        off.length === 0,
+        JSON.stringify({ off, window: fold.window })
+      );
+      check(
+        `${w}x${h} paint, all 48: the document is no taller than the window`,
+        fold.scrollHeight <= fold.window + 1,
+        `${fold.scrollHeight} against ${fold.window}`
+      );
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await sleep(700);
+
+    const nestedPaint = await page.evaluate(() =>
+      [
+        ...document.querySelectorAll(
+          '[role="button"] [role="button"], [role="button"] [role="radio"],' +
+            '[role="radio"] [role="button"], [role="radio"] [role="radio"]'
+        ),
+      ]
+        .filter((n) => n.offsetParent !== null)
+        .map((n) => n.getAttribute('aria-label'))
+    );
+    check('paint: no control is nested inside another control', nestedPaint.length === 0,
+      JSON.stringify(nestedPaint));
   }
 
   // -- 4. the flat net view -------------------------------------------------
@@ -529,6 +595,38 @@ try {
 
     check('idle: nothing outside the net is under 44pt', (await census()).length === 0,
       JSON.stringify(await census()));
+
+    // No interactive element inside another one.
+    //
+    // The `?` was a Pressable inside the step row's Pressable. React logs the
+    // nesting on web and the tab order happens to come out right, so four
+    // rounds of browser testing said nothing. On iOS a View with
+    // `accessible={true}` - which Pressable sets as soon as it is given an
+    // accessibilityRole - merges every child into ONE accessibility element, so
+    // VoiceOver would have found the row and never the `?` inside it: the
+    // teaching affordance the round made universal, invisible to exactly the
+    // people the accessibility work was for.
+    const nested = () =>
+      page.evaluate(() =>
+        [
+          ...document.querySelectorAll(
+            '[role="button"] [role="button"], [role="button"] [role="radio"],' +
+              '[role="button"] [role="switch"], [role="radio"] [role="button"],' +
+              '[role="switch"] [role="button"]'
+          ),
+        ]
+          .filter((n) => n.offsetParent !== null)
+          .map((n) => ({
+            inner: n.getAttribute('aria-label'),
+            outer: n.parentElement?.closest('[role="button"],[role="radio"],[role="switch"]')
+              ?.getAttribute('aria-label'),
+          }))
+      );
+    check(
+      'solve: no control is nested inside another control',
+      (await nested()).length === 0,
+      JSON.stringify(await nested())
+    );
 
     // 7b.1 the explanation opens from a row that is not running.
     let longest = 0;
