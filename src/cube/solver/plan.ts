@@ -17,6 +17,7 @@ import {
   Vec3,
   applyAlg,
   cubieKind,
+  foldMoves,
   formatAlg,
   parseAlg,
   vecKey,
@@ -396,6 +397,14 @@ export function buildPlan(state: CubeState): SolvePlan {
 
     for (const stage of stages) {
       for (const step of stage.steps) {
+        // Consecutive turns of one face, folded. The solver joins searched
+        // sequences and taught algorithms end to end and cannot see the seam:
+        // an algorithm ending `U'` followed by a setup turn of `U` printed both
+        // to the learner, and practise mode then asked them to recall a move
+        // that undoes the move before it. See `foldMoves`.
+        const moves = foldMoves(step.moves);
+        // A step that folds away entirely did nothing; it is not a step.
+        if (moves.length === 0) continue;
         const named = step.destination ? describeSlot(rotated, step.destination) : null;
         const focus = [...step.focus, ...(step.destination ? [step.destination] : [])];
         const pieceColors = step.destination
@@ -419,17 +428,17 @@ export function buildPlan(state: CubeState): SolvePlan {
           algorithm: step.algorithm,
           algorithmId: step.algorithmId,
           noteVars: step.noteVars,
-          effect: piecesMoved(cursor, step.moves),
-          notation: formatAlg(step.moves),
-          moves: step.moves,
+          effect: piecesMoved(cursor, moves),
+          notation: formatAlg(moves),
+          moves,
           prelude: [...prelude],
           targetSlots: slotsOn(focus),
           pieceColors,
           pieceKeys: [...keys],
           finishes: [],
         });
-        prelude = [...prelude, ...step.moves];
-        cursor = applyAlg(cursor, step.moves);
+        prelude = [...prelude, ...moves];
+        cursor = applyAlg(cursor, moves);
         // Remember where each step leaves the cube, so the pass below can work
         // out which step actually finishes each piece.
         after.set(steps[steps.length - 1].id, cursor);

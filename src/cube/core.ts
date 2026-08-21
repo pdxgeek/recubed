@@ -267,6 +267,49 @@ export const invertMove = (mv: Move): Move =>
 
 export const formatAlg = (moves: Move[]) => moves.map((m) => m.notation).join(' ');
 
+/**
+ * The same turns, with consecutive turns of one face folded together.
+ *
+ * `L' L2` is `L`. `U' U` is nothing at all. Both were being printed to
+ * learners: over 579 beginner steps, 15% contained a pair that should have
+ * merged and 7.3% a pair that cancels outright, and practise mode then covered
+ * each of those moves with a `?`, asked the learner to recall it, and scored
+ * them on it. Asking someone to remember a turn that undoes the turn before it
+ * is not a memory test, it is a mistake with a stopwatch on it.
+ *
+ * They arise at seams the solver cannot see: an algorithm ending in `U'`
+ * followed by a setup turn of `U`, or two searched sequences joined end to end.
+ * Adjacent turns of the same face commute with nothing in between them, so
+ * summing their quarter turns is exact - `foldMoves` never changes what a
+ * sequence does to the cube, only how many moves it takes to say it.
+ *
+ * Run to a fixed point, because removing a cancelling pair can bring two more
+ * turns of the same face together: `R U U' R'` is `R R'` is nothing.
+ */
+export function foldMoves(moves: Move[]): Move[] {
+  const out: Move[] = [];
+  for (const mv of moves) {
+    const last = out[out.length - 1];
+    if (!last || last.base !== mv.base) {
+      out.push(mv);
+      continue;
+    }
+    out.pop();
+    // -1 is three quarter turns the other way; 0 is a full turn, i.e. nothing.
+    const turns = (((last.amount + mv.amount) % 4) + 4) % 4;
+    if (turns === 0) continue;
+    out.push(parseMove(mv.base + (turns === 1 ? '' : turns === 2 ? '2' : "'")));
+    // The merged move may now sit against another turn of the same face.
+    while (out.length >= 2 && out[out.length - 2].base === out[out.length - 1].base) {
+      const b = out.pop()!;
+      const a = out.pop()!;
+      const t = (((a.amount + b.amount) % 4) + 4) % 4;
+      if (t !== 0) out.push(parseMove(b.base + (t === 1 ? '' : t === 2 ? '2' : "'")));
+    }
+  }
+  return out;
+}
+
 /** Signed quarter turns about the positive basis axis for this move. */
 export function moveQuarterTurns(mv: Move): number {
   return MOVE_DEFS[mv.base].turnsPerClockwise * mv.amount;

@@ -338,6 +338,53 @@ for (let i = 0; i < N; i++) {
   }
 }
 
+// --- no step asks a learner to undo the move they have just made ------------
+//
+// Known since round 1, measured in round 5: over 579 beginner steps, 7.3%
+// contained a pair that cancels to nothing and 15% a pair that should have
+// merged - `L' L2` where `L` was meant, `F U F' U' U L U L' U'` with a `U' U`
+// in the middle. Practise mode then covered each of those moves with a `?`,
+// asked the learner to recall it and scored them on it.
+{
+  let steps = 0;
+  let cancelling = 0;
+  let merging = 0;
+  let moves = 0;
+  const examples: string[] = [];
+  for (let i = 0; i < 8; i++) {
+    const plan = buildPlan(applyAlg(solvedState(), scramble()));
+    if (!plan.ok) continue;
+    for (const method of plan.methods) {
+      for (const st of method.steps) {
+        steps++;
+        moves += st.moves.length;
+        if (st.moves.length === 0) {
+          cancelling++;
+          continue;
+        }
+        for (let j = 0; j + 1 < st.moves.length; j++) {
+          if (st.moves[j].base !== st.moves[j + 1].base) continue;
+          const turns = (((st.moves[j].amount + st.moves[j + 1].amount) % 4) + 4) % 4;
+          if (turns === 0) cancelling++;
+          else merging++;
+          if (examples.length < 3) examples.push(`${st.title}: ${st.notation}`);
+        }
+      }
+    }
+  }
+  if (cancelling || merging) {
+    fails++;
+    console.log(
+      `FAIL  ${cancelling} cancelling and ${merging} mergeable pairs across ${steps} steps`
+    );
+    for (const e of examples) console.log(`      ${e}`);
+  } else {
+    console.log(
+      `ok    none of ${steps} steps (${moves} moves) prints a turn against the turn before it`
+    );
+  }
+}
+
 // --- the piece count under the sheet is THIS step's, not the algorithm's ----
 //
 // The footnote used to state the algorithm's effect on a solved cube while the

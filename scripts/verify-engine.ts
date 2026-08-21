@@ -1,8 +1,11 @@
 /** Sanity checks for the move engine. Run: npx tsx scripts/verify-engine.ts */
 import {
   solvedState, applyAlg, isSolved, SLOTS, parseAlg, formatAlg, invertMove,
-  CENTER_SLOT, Face, FACES,
+  CENTER_SLOT, Face, FACES, foldMoves,
 } from '../src/cube/core';
+
+/** A cube's stickers as a string, for comparing two ways of reaching it. */
+const cubeKeyOf = (st: { colors: (string | null)[] }) => st.colors.join('');
 
 let failures = 0;
 const check = (name: string, ok: boolean, extra = '') => {
@@ -63,6 +66,72 @@ roundTrip("R U R' U' F' U F R2 D' M2 Rw Uw'");
   const st = applyAlg(solvedState(), "R U R' U'");
   const moved = st.home.filter((h, i) => h !== i).length;
   check('sexy move displaces some stickers', moved > 0, `moved=${moved}`);
+}
+
+// --- folding consecutive turns of one face ---------------------------------
+//
+// `L' L2` is `L`; `U' U` is nothing. Both were printed to learners - 15% of
+// beginner steps carried a pair that should merge and 7.3% a pair that cancels
+// outright - and practise mode then covered each of them with a `?` and scored
+// the learner on recalling it. The fold is only allowed to change how many
+// moves a sequence takes to say, never what it does.
+{
+  const hand: [string, string][] = [
+    ["L' L2", 'L'],
+    ["L2 L F'", "L' F'"],
+    ["U2 U F U' F' U' L' U L", "U' F U' F' U' L' U L"],
+    ["F U F' U' U L U L' U'", "F U F' L U L' U'"],
+    ["R U U' R'", ''],
+    ["R U R' U'", "R U R' U'"],
+    ['U U U', "U'"],
+    ['U U U U', ''],
+    ['', ''],
+  ];
+  let bad = 0;
+  for (const [input, want] of hand) {
+    const got = formatAlg(foldMoves(parseAlg(input)));
+    if (got !== want) {
+      bad++;
+      check(`fold "${input}"`, false, `got "${got}", wanted "${want}"`);
+    }
+  }
+  if (!bad) check(`${hand.length} hand-written folds come out right`, true);
+
+  // And over random sequences: same cube, never longer, nothing left to fold,
+  // and folding a folded sequence changes nothing.
+  let seed = 20260821;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const BASES = ['U', 'D', 'R', 'L', 'F', 'B', 'M', 'E', 'S', 'Rw', 'Uw', 'x', 'y'];
+  let changed = 0;
+  let longer = 0;
+  let leftovers = 0;
+  let unstable = 0;
+  let saved = 0;
+  let total = 0;
+  for (let i = 0; i < 3000; i++) {
+    // Deliberately repetitive: a uniform random sequence rarely repeats a face.
+    const n = 2 + Math.floor(rnd() * 12);
+    const tokens: string[] = [];
+    for (let j = 0; j < n; j++) {
+      const base = tokens.length && rnd() < 0.45
+        ? tokens[tokens.length - 1].replace(/[2']/g, '')
+        : BASES[Math.floor(rnd() * BASES.length)];
+      tokens.push(base + ["", "'", '2'][Math.floor(rnd() * 3)]);
+    }
+    const moves = parseAlg(tokens.join(' '));
+    const folded = foldMoves(moves);
+    total += moves.length;
+    saved += moves.length - folded.length;
+    if (cubeKeyOf(applyAlg(solvedState(), moves)) !== cubeKeyOf(applyAlg(solvedState(), folded))) changed++;
+    if (folded.length > moves.length) longer++;
+    for (let j = 0; j + 1 < folded.length; j++) if (folded[j].base === folded[j + 1].base) leftovers++;
+    if (formatAlg(foldMoves(folded)) !== formatAlg(folded)) unstable++;
+  }
+  check('folding never changes what a sequence does', changed === 0, `${changed} of 3000`);
+  check('folding never makes a sequence longer', longer === 0, `${longer} of 3000`);
+  check('nothing foldable is left behind', leftovers === 0, `${leftovers} pairs`);
+  check('folding a folded sequence is a no-op', unstable === 0, `${unstable} of 3000`);
+  check(`and it had something to do (${saved} of ${total} moves removed)`, saved > total * 0.1);
 }
 
 console.log(failures === 0 ? '\nALL ENGINE CHECKS PASSED' : `\n${failures} FAILURES`);
