@@ -60,6 +60,10 @@ export function CubeCanvas({
         return;
       }
       sceneRef.current = scene;
+      // The layout is usually measured before the context exists; hand it over
+      // as soon as there is a scene to take it, so the very first frame is
+      // fitted to the rectangle on screen rather than to the buffer's shape.
+      scene.setLayoutSize(layout.current.width, layout.current.height);
       // Everything about the frame - re-fitting a resized surface, capping the
       // delta, tearing down exactly once - lives in `render/loop.ts`, where it
       // can be driven by a fake clock in `verify-render.ts`.
@@ -88,8 +92,12 @@ export function CubeCanvas({
   const onLayout = useCallback((e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     layout.current = { width: Math.max(1, width), height: Math.max(1, height) };
-    // Picking reads the scene's own aspect, so re-fit as soon as the view
-    // changes shape rather than waiting for the next frame.
+    // Two measurements of one surface: the layout's shape, in points, is what
+    // the projection is built from, and the drawing buffer's pixels are what
+    // the viewport is set from. Both are handed over here rather than only the
+    // buffer, because on a device the two can disagree - which is what a cube
+    // clipped by the top of its own canvas looks like.
+    sceneRef.current?.setLayoutSize(layout.current.width, layout.current.height);
     loopRef.current?.syncSize();
   }, []);
 

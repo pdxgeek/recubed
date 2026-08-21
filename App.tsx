@@ -78,6 +78,7 @@ import {
 import { chunkNameAt } from './src/ui/notation';
 import { TOP_BAR_H, netBlockHeight } from './src/ui/net';
 import { tokens } from './src/ui/theme';
+import { listBottomInset, panelOverflow, runPanelHeight } from './src/ui/layout';
 
 /**
  * Whether the "drag to spin" nudge has already been shown. Module scope, so it
@@ -108,6 +109,21 @@ export default function App() {
    * list is one row during a run, which is not worth 180pt of cube.
    */
   const short = height < 700;
+
+  /**
+   * The body's own measured height, and the panel's box inside it.
+   *
+   * Every layout number in this project was measured in Chromium through
+   * react-native-web. The first screenshot from a real phone showed the step
+   * bar drawn over the step list, which is what a panel whose box runs past the
+   * bottom of the body looks like - and a browser would never have shown it,
+   * because react-native-web clips a View by default and iOS does not. So the
+   * overflow is measured at runtime rather than assumed to be zero: whatever it
+   * turns out to be, the list reserves exactly that much and no more.
+   */
+  const [bodyBox, setBodyBox] = useState({ width: 0, height: 0 });
+  const [panelBox, setPanelBox] = useState({ y: 0, height: 0 });
+  const overflow = panelOverflow(bodyBox, panelBox);
 
   /**
    * Bumped every time a new scene is built, so the effects below re-apply the
@@ -537,6 +553,18 @@ export default function App() {
 
   // -- panels --------------------------------------------------------------
 
+  /**
+   * How tall the panel is while a step is running.
+   *
+   * 38% of the body, as a real number once the body has been measured. The
+   * clamp is what keeps a very tall or very short window sensible; the fallback
+   * is only in play for the first frame.
+   */
+  const runPanel = (() => {
+    const h = runPanelHeight(bodyBox.height, Math.min(200, sheetMin));
+    return { minHeight: h, maxHeight: h };
+  })();
+
   const panel =
     mode === 'paint' ? (
       <PaintPanel
@@ -573,6 +601,7 @@ export default function App() {
         pair={pair}
         stepForSelection={stepForSelection}
         onClearSelection={() => setSelection(null)}
+        bottomInset={listBottomInset(overflow)}
       />
     );
 
@@ -588,7 +617,13 @@ export default function App() {
         onWireframe={setWireframe}
         onResetView={() => sceneRef.current?.resetOrientation()}
       />
-      <View style={[styles.body, wide ? styles.bodyRow : styles.bodyCol]}>
+      <View
+        style={[styles.body, wide ? styles.bodyRow : styles.bodyCol]}
+        onLayout={(e) => {
+          const { width: w, height: h } = e.nativeEvent.layout;
+          setBodyBox((b) => (Math.abs(b.width - w) < 0.5 && Math.abs(b.height - h) < 0.5 ? b : { width: w, height: h }));
+        }}
+      >
         <View style={[styles.canvasWrap, playback && styles.canvasWrapRunning]}>
           {/* The GL surface stays mounted while the net is showing: unmounting
               it tears the scene down (as it must on a real unmount), and every
@@ -653,6 +688,10 @@ export default function App() {
           )}
         </View>
         <View
+          onLayout={(e) => {
+            const { y, height: h } = e.nativeEvent.layout;
+            setPanelBox((b) => (Math.abs(b.y - y) < 0.5 && Math.abs(b.height - h) < 0.5 ? b : { y, height: h }));
+          }}
           style={[
             styles.panel,
             wide
@@ -662,7 +701,11 @@ export default function App() {
                   playback
                     ? short
                       ? { minHeight: 140, maxHeight: 140 }
-                      : { minHeight: Math.min(200, sheetMin), maxHeight: '38%' as const }
+                      : // A definite number, not a percentage of a parent whose
+                        // own height Yoga resolves differently on the two
+                        // platforms. Same 38% as before once the body has been
+                        // measured; the old percentage only while it has not.
+                        runPanel
                     : flatPaint
                       ? styles.panelCompact
                       : flat
@@ -778,7 +821,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     overflow: 'hidden',
   },
-  panel: { backgroundColor: surface.base },
+  // `overflow: hidden` matters only on native: react-native-web clips a View
+  // by default and iOS does not, so a child laid out taller than this box drew
+  // straight over the step bar below it on a device and never once on the web
+  // target the whole project was measured against.
+  panel: { backgroundColor: surface.base, overflow: 'hidden' },
   panelNet: { flexShrink: 1, minHeight: 260 },
   // The sheet covers the body rather than the panel: during a run the panel is
   // 230pt, which is not enough to explain anything in.

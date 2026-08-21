@@ -17,6 +17,17 @@ interface Props {
   running: boolean;
   /** True while the moves are covered, so the card must not give them away. */
   practising: boolean;
+  /**
+   * Space to leave under the last row.
+   *
+   * Was a flat 72, from a round when the transport bar was an overlay. It is a
+   * sibling now, so on a correct layout the list needs breathing room and
+   * nothing more - and 72 was most of a step row of dead space on a phone. The
+   * shell measures whether its panel's box actually runs past the bottom of the
+   * body and adds exactly that: zero on the web target, whatever it turns out
+   * to be on a device.
+   */
+  bottomInset?: number;
   onSelectStep: (step: PlanStep) => void;
   /** Opens the "why this works" sheet over the panel. */
   onExplain: (step: PlanStep) => void;
@@ -68,6 +79,7 @@ export function SolvePanel({
   pair,
   stepForSelection,
   onClearSelection,
+  bottomInset = 16,
 }: Props) {
   const list = useRef<ScrollView>(null);
   const stepY = useRef<Record<string, number>>({});
@@ -215,7 +227,11 @@ export function SolvePanel({
     <View style={styles.wrap}>
       {!running && selectionCard}
 
-      <ScrollView ref={list} style={styles.list} contentContainerStyle={styles.listContent}>
+      <ScrollView
+        ref={list}
+        style={styles.list}
+        contentContainerStyle={[styles.listContent, { paddingBottom: bottomInset }]}
+      >
         {methods.map((method) => (
           <View key={method.id} style={styles.method}>
             <View style={styles.methodHead}>
@@ -444,7 +460,7 @@ const styles = StyleSheet.create({
 
   // -- list -----------------------------------------------------------------
   list: { flex: 1, marginHorizontal: -4 },
-  listContent: { paddingHorizontal: 4, paddingBottom: 72 },
+  listContent: { paddingHorizontal: 4 },
   method: { marginTop: space.md },
   methodHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   methodTitle: { ...type.heading, color: text.primary, flex: 1 },

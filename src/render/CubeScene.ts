@@ -9,6 +9,20 @@
 import { Matrix3, Matrix4, Quaternion, Vector3 } from 'three';
 import { CubeRotation } from '../cube/orientation';
 import {
+  BODY,
+  CameraFit,
+  FOV_DEGREES,
+  RING,
+  RING_LIFT,
+  SPACING,
+  STICKER,
+  STICKER_LIFT,
+  Viewport,
+  fitCamera,
+  fitFor,
+  viewportFor,
+} from './fit';
+import {
   PITCH_PER_PIXEL,
   YAW_PER_PIXEL,
   applySpin,
@@ -42,12 +56,8 @@ import {
  */
 export const SCENE_BUILD = String(Date.now());
 
-const SPACING = 1.0;
-const BODY = 0.94;
-const STICKER = 0.8;
-const RING = 0.94;
-const STICKER_LIFT = BODY / 2 + 0.012;
-const RING_LIFT = BODY / 2 + 0.006;
+// The geometry and the camera that frames it live in `./fit.ts`, which imports
+// nothing, so `verify-fit.ts` can drive the fit with device-shaped numbers.
 
 const BLANK_COLOR = '#2b2b34';
 const BODY_COLOR = '#191922';
@@ -75,8 +85,6 @@ export const SCENE_COLORS = {
   clear: CLEAR_COLOR,
 } as const;
 
-const FIT_RADIUS = 2.95;
-const FOV = 40;
 
 type RGB = [number, number, number];
 const rgb = (hex: string): RGB => [
@@ -223,6 +231,18 @@ export class CubeScene {
 
   private width = 1;
   private height = 1;
+  /**
+   * The surface's shape as the layout reports it, in points.
+   *
+   * Kept apart from the drawing buffer on purpose: the buffer says how many
+   * pixels to write, the layout says what rectangle the person is looking at.
+   * On the web target they always agree; the first real-device screenshot of
+   * this app had the cube cut off at the top and bottom of the canvas, which is
+   * what a projection built for the wrong shape looks like.
+   */
+  private layout: { width: number; height: number } | null = null;
+  private fit: CameraFit = fitCamera(1, 1);
+  private viewport: Viewport = { width: 1, height: 1 };
 
   private wireframe = false;
   private targetKeys = new Set<string>();
@@ -417,17 +437,31 @@ export class CubeScene {
     return true;
   }
 
+  /**
+   * Tell the scene the shape of the view in layout units. Re-fits when the
+   * shape really changed, so this is safe to call from every `onLayout`.
+   */
+  setLayoutSize(width: number, height: number): boolean {
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    if (this.layout && Math.abs(this.layout.width - w) < 0.5 && Math.abs(this.layout.height - h) < 0.5) {
+      return false;
+    }
+    this.layout = { width: w, height: h };
+    this.resize(this.width, this.height);
+    return true;
+  }
+
   resize(width: number, height: number) {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
-    const aspect = this.width / this.height;
-    let dist = FIT_RADIUS / Math.tan((FOV * Math.PI) / 360);
-    if (aspect < 1) dist /= aspect;
-    const top = 0.1 * Math.tan((FOV * Math.PI) / 360);
-    const right = top * aspect;
-    this.proj.makePerspective(-right, right, top, -top, 0.1, 100);
-    this.view.makeTranslation(0, 0, -dist);
-    this.gl.viewport(0, 0, this.width, this.height);
+    // Shape from the layout when there is one, pixels from the buffer always.
+    this.fit = fitFor({ width: this.width, height: this.height }, this.layout);
+    const { top, right, near, far, distance } = this.fit;
+    this.proj.makePerspective(-right, right, top, -top, near, far);
+    this.view.makeTranslation(0, 0, -distance);
+    this.viewport = viewportFor({ width: this.width, height: this.height }, this.layout);
+    this.gl.viewport(0, 0, this.viewport.width, this.viewport.height);
   }
 
   orbit(dx: number, dy: number) {
@@ -509,8 +543,10 @@ export class CubeScene {
   pick(u: number, v: number): number | null {
     const ndcX = u * 2 - 1;
     const ndcY = -(v * 2) + 1;
-    const top = Math.tan((FOV * Math.PI) / 360);
-    const aspect = this.width / this.height;
+    // The same aspect the projection was built from, never the buffer's - a tap
+    // has to hit what the person can see.
+    const top = Math.tan((FOV_DEGREES * Math.PI) / 360);
+    const aspect = this.fit.aspect;
     const dir = new Vector3(ndcX * top * aspect, ndcY * top, -1).normalize();
     const camDist = -this.view.elements[14];
     const origin = new Vector3(0, 0, camDist);
@@ -632,7 +668,7 @@ export class CubeScene {
   render() {
     const gl = this.gl;
     gl.useProgram(this.program);
-    gl.viewport(0, 0, this.width, this.height);
+    gl.viewport(0, 0, this.viewport.width, this.viewport.height);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.uniformMatrix4fv(this.loc.uProj!, false, this.proj.elements);
     gl.uniformMatrix4fv(this.loc.uView!, false, this.view.elements);
