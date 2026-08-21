@@ -28,6 +28,31 @@ applied without animating, so you can practise the one you are stuck on. Steps
 play back at a pace you can follow, forwards or backwards, with the move letters
 under the cube rather than in a bar of their own.
 
+**Why it works.** Every step in the list carries a `?`. It opens an explanation
+over the panel: what the algorithm does to the cube, which pieces to watch by
+name and colour, and how many pieces *this step* moves — counted from the step's
+own moves against the step's own cube, not from the algorithm on a solved one.
+`Watch it slowly` plays the step from there; `Show only these` strips the cube to
+the pieces in play.
+
+**Practise mode.** While a step is running, `Practise` covers the moves ahead and
+reveals them one at a time. After each reveal you say whether you had it, and the
+step ends with your own score rather than a move count. Nothing can give the
+answer away while it is on: `Play` and `Next move` are disabled, and the
+explanation sheet drops its notation and veils the move sequences in its prose.
+
+**How you are doing.** Practising accumulates, keyed on the algorithm rather than
+the step — the sexy move is one thing to learn however many faces you perform it
+on. The 4pt rail down the left of each step row shows it: nothing for an
+algorithm you have not met, a short amber bar while you are learning it, a full
+green one once you have run it clean twice. It is **this session only**; the app
+does not claim to remember you tomorrow, and says so.
+
+**Flat view.** A net of all 54 stickers, letters and colours both, for painting
+without spinning and for checking the whole cube at once. Every cell is a 44pt
+target and reports its face, row and column, so the cube can be read and painted
+without the 3D canvas at all.
+
 **Stuck on one piece.** Tap it — a whole piece, never a single sticker, and only
 one at a time. It lights up white, the slot it has to reach lights up amber, and
 the panel offers **Show me how to get it there**, which jumps straight to the step
@@ -63,15 +88,18 @@ native build.
 | --- | --- |
 | `src/cube/core.ts` | Sticker slots, move notation, and the facelet engine that the UI animates |
 | `src/cube/cubie.ts` | Piece-level (corner/edge permutation and orientation) representation, plus validation of a painted cube |
-| `src/cube/algorithms.ts` | The algorithm library, with the pieces each one moves derived by running it |
+| `src/cube/algorithms.ts` | The algorithm library, with the pieces each one moves derived by running it, and the teaching note for each |
+| `src/cube/effect.ts` | What a set of moves does to a given cube — the number under the "why this works" sheet |
 | `src/cube/solver/beginner.ts` | Layer-by-layer solver, stage by stage |
 | `src/cube/solver/kociemba.ts` | Two-phase solver for the shortest solve |
 | `src/cube/solver/plan.ts` | Turns a painted cube into "what is left to do" |
 | `src/cube/orientation.ts` | The 24 ways to hold the cube, used to re-label it |
 | `src/cube/pieces.ts` | Pairing a piece with the slot it belongs in |
-| `src/cube/algorithms.ts` | A checked reference set of 52 algorithms, kept for the solvers to draw on |
-| `src/cube/algorithms.ts` | A checked reference set of 52 algorithms (not currently shown in the app) |
+| `src/learn/session.ts` | One practise attempt: what was revealed, and what the learner said about it |
+| `src/learn/progress.ts` | What the learner knows, across steps, keyed on the algorithm |
 | `src/render/CubeScene.ts` | The WebGL renderer, picking, turning and animation |
+| `src/render/fit.ts` | Where the camera stands so the whole cube is in frame, in units the platform cannot confuse |
+| `src/ui/layout.ts`, `src/ui/net.ts`, `src/ui/notation.ts`, `src/ui/palette.ts` | The layout, net, notation and colour arithmetic, all free of react-native so the suite can drive them |
 | `src/components/` | Canvas, panels, move strip and controls |
 
 Two representations of the cube are kept deliberately. The **facelet** engine
@@ -119,8 +147,31 @@ Nothing about the cube maths is taken on trust:
 - piece/slot pairing is checked to be consistent in both directions;
 - the beginner solver is run over hundreds of random scrambles;
 - the two-phase solver's solutions are applied back to the scramble;
-- and the whole plan is replayed through the facelet engine the UI actually uses,
-  so the setup rotation is covered too.
+- the whole plan is replayed through the facelet engine the UI actually uses,
+  so the setup rotation is covered too;
+- **the teaching copy is checked against the engine**, not merely checked to
+  exist: every note is scanned for the kinds of claim it makes — "leaves the
+  fourth alone", "no edge moves at all", "clockwise", "six repetitions" — and
+  each one has to hold. Four claims were false and are now not;
+- the piece count printed under a step equals the count that step's own moves
+  produce, computed a second, independent way;
+- no step prints a turn against the turn before it (`L' L2` is `L`, `U' U` is
+  nothing), and folding a sequence is proved never to change what it does;
+- the camera fit is driven with device-shaped surfaces at every device pixel
+  ratio, and every vertex the renderer draws has to land inside the frame;
+- and the learner model is checked to be honest: watching is not knowing, one
+  clean run is not knowing, one miss undoes it, and an attempt with no answers
+  in it changes nothing.
+
+```bash
+npm run verify:ui
+```
+
+Drives the real app in a browser through Playwright: reachability, 44pt targets,
+accessibility state, the net fitting on an iPhone SE, and that practise mode
+cannot be made to print the answer. It is the **web target only** — the first
+real-device screenshot of this app disagreed with four rounds of browser
+measurement, which is why `src/render/fit.ts` and `src/ui/layout.ts` exist.
 
 ```bash
 npm run typecheck

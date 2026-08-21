@@ -198,7 +198,18 @@ const styles = StyleSheet.create({
   backText: { ...type.heading, color: accent.base },
   title: { ...type.heading, color: text.primary, flex: 1, textAlign: 'right' },
   scroll: { flexShrink: 1 },
-  body: { padding: space.gutter, paddingBottom: space.sm, gap: 6 },
+  // Capped, and centred in whatever it is given. On a 1024pt tablet the sheet
+  // is full-bleed across both the cube and the side panel, so every paragraph
+  // set at 992pt - about 145 characters against the 45-75 that reads - on the
+  // one surface in the app where a long line costs comprehension directly.
+  body: {
+    padding: space.gutter,
+    paddingBottom: space.sm,
+    gap: 6,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+  },
   // Over the content, not above it: a chip that took 44pt of layout made the
   // overflow it warns about 44pt worse.
   more: {
