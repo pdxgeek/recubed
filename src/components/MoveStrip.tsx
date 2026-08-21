@@ -4,7 +4,12 @@ import { Move } from '../cube/core';
 import { chunkByTriggers } from '../cube/algorithms';
 import { Recall } from '../learn/session';
 import { stripHeading } from '../ui/notation';
+import { spokenMove } from '../ui/glyphs';
+import { MoveGlyph } from './MoveGlyph';
 import { tokens } from '../ui/theme';
+
+/** The glyph's side in the strip. Below 44 the nine cells become three bars. */
+const CHIP = 36;
 
 interface Props {
   title: string;
@@ -42,14 +47,6 @@ interface Props {
   onReport: (outcome: Recall) => void;
   /** "Done in 13 moves · 11 knew, 2 missed" - their own verdicts, not a guess. */
   summary: string;
-}
-
-/** "R'" reads as "R apostrophe" otherwise. */
-function spoken(notation: string): string {
-  const base = notation[0];
-  if (notation.endsWith("'")) return `${base} prime`;
-  if (notation.endsWith('2')) return `${base} twice`;
-  return base;
 }
 
 /** The move sequence, shown under the cube rather than in its own bar. */
@@ -124,7 +121,7 @@ export function MoveStrip({
   );
   const label =
     `${title}. Move ${Math.min(step + 1, moves.length)} of ${moves.length}: ` +
-    `${spoken(moves[Math.min(step, moves.length - 1)]?.notation ?? '')}`;
+    `${spokenMove(moves[Math.min(step, moves.length - 1)]?.notation ?? '')}`;
 
   return (
     <View
@@ -207,24 +204,17 @@ export function MoveStrip({
                     onLayout={(e) => {
                       chipX.current[i] = e.nativeEvent.layout.x;
                     }}
-                    style={[
-                      styles.chip,
-                      past && styles.chipPast,
-                      current && !hidden && styles.chipCurrent,
-                      hidden && styles.chipHidden,
-                    ]}
+                    style={styles.chip}
                   >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        past && styles.chipTextPast,
-                        current && !hidden && styles.chipTextCurrent,
-                        hidden && styles.chipTextHidden,
-                      ]}
-                      maxFontSizeMultiplier={1.3}
-                    >
-                      {hidden ? '?' : m.notation}
-                    </Text>
+                    {/* The move as a picture, not as letters: a 3x3 grid with
+                        an arrow showing which layer turns and which way. The
+                        letter survives as the accessibility label. */}
+                    <MoveGlyph
+                      notation={m.notation}
+                      size={CHIP}
+                      state={current ? 'current' : past ? 'past' : 'future'}
+                      covered={hidden}
+                    />
                   </View>
                 );
               })}
@@ -356,33 +346,9 @@ const styles = StyleSheet.create({
     borderColor: line.outline,
     paddingVertical: 3,
   },
-  chip: {
-    minWidth: 40,
-    paddingHorizontal: space.sm,
-    paddingVertical: space.sm,
-    borderRadius: radius.sm,
-    backgroundColor: surface.raised,
-    borderWidth: 1,
-    borderColor: line.outline,
-    alignItems: 'center',
-  },
-  // Past, current and future differ by more than colour: opacity and weight too.
-  chipPast: { backgroundColor: accent.soft, borderColor: line.outline, opacity: 0.55 },
-  chipCurrent: {
-    backgroundColor: accent.base,
-    borderColor: accent.base,
-    borderWidth: 2,
-    transform: [{ scale: 1.06 }],
-  },
-  chipHidden: {
-    backgroundColor: 'transparent',
-    borderStyle: 'dashed',
-    borderColor: line.outline,
-  },
-  chipTextHidden: { color: text.tertiary },
-  chipText: { ...type.monoChip, color: text.secondary },
-  chipTextPast: { color: text.primary },
-  chipTextCurrent: { color: accent.ink },
+  // The tile carries its own state - fill, border, opacity - so the chip is
+  // only a target: 44pt tall around a 36pt glyph.
+  chip: { minWidth: hit.min, minHeight: hit.min, alignItems: 'center', justifyContent: 'center' },
   reveal: {
     marginHorizontal: space.gutter,
     marginTop: space.xs,

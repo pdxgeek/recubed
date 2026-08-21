@@ -109,6 +109,14 @@ export function WhySheet({
           // than inferred from a text dump.
           <View nativeID="why-notation">
             <Notation moves={step.moves} variant="blocks" rawBelow={4} />
+            {/* The strip draws these as diagrams. This is where the standard
+                letters live, so a learner who wants to carry the algorithm to
+                the wider cubing world can, and it is the one place the diagram's
+                convention is stated. */}
+            <Text style={styles.legend}>
+              In the strip each of these is a diagram: the shaded band is the layer that turns,
+              the arrow is which way, and a curved arrow is the face you are looking at.
+            </Text>
           </View>
         )}
 
@@ -197,6 +205,7 @@ const styles = StyleSheet.create({
   back: { minHeight: hit.min, justifyContent: 'center', paddingRight: space.sm },
   backText: { ...type.heading, color: accent.base },
   title: { ...type.heading, color: text.primary, flex: 1, textAlign: 'right' },
+  legend: { ...type.caption, color: text.tertiary, marginTop: space.xs },
   scroll: { flexShrink: 1 },
   // Capped, and centred in whatever it is given. On a 1024pt tablet the sheet
   // is full-bleed across both the cube and the side panel, so every paragraph

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Move } from '../cube/core';
 import { NotationBlock, notationBlocks, summaryLine } from '../ui/notation';
+import { spokenMove } from '../ui/glyphs';
 import { tokens } from '../ui/theme';
 
 /**
@@ -37,14 +38,6 @@ interface Props {
   style?: object;
 }
 
-/** "R'" reads as "R apostrophe" otherwise. */
-function spoken(notation: string): string {
-  const base = notation[0];
-  if (notation.endsWith("'")) return `${base} prime`;
-  if (notation.endsWith('2')) return `${base} twice`;
-  return base;
-}
-
 export function Notation({
   moves,
   variant = 'summary',
@@ -78,7 +71,7 @@ export function Notation({
       {blocks.map((block: NotationBlock) => {
         const open = expanded.includes(block.start);
         const text = (block.repeat > 1 && !open ? block.period : block.all).join(' ');
-        const spokenAll = block.all.map(spoken).join(', ');
+        const spokenAll = block.all.map(spokenMove).join(', ');
         const body = (
           <>
             {block.label ? (
