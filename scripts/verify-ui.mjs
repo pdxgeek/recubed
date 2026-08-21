@@ -571,8 +571,11 @@ try {
         const body = sheet.innerText;
         return {
           overflow: sc ? sc.scrollHeight - sc.clientHeight : 0,
-          // The payload: "N corners and M edges move; the other K do not".
-          hasFootnote: /corners? and \d+ edges? move/.test(body),
+          // The payload: "This step moves N corners and M edges; the other K
+          // pieces stay where they are". Counted from the step's own moves
+          // against the step's own cube - the algorithm's count on a solved
+          // cube, which this used to look for, was right on 30% of steps.
+          hasFootnote: /This step moves (no|\d+) corners? and (no|\d+) edges?;/.test(body),
           hasNote: /What it does/.test(body),
           more: !!document.querySelector('[aria-label="Scroll for more"]'),
         };

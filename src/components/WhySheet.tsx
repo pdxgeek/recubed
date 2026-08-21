@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { PlanStep, algorithmForStep, piecesToWatch } from '../cube/solver/plan';
+import { PlanStep, noteForStep, piecesToWatch, stepFootnote } from '../cube/solver/plan';
 import { Notation } from './Notation';
 import { tokens } from '../ui/theme';
 
@@ -30,8 +30,14 @@ interface Props {
 }
 
 export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Props) {
-  const alg = useMemo(() => algorithmForStep(step), [step]);
+  const note = useMemo(() => noteForStep(step), [step]);
   const watching = useMemo(() => piecesToWatch(step), [step]);
+  // Counted from the step's own moves against the step's own cube, in
+  // `plan.ts`, and only read here. The sentence this replaces was the
+  // algorithm's count on a solved cube, printed under a step whose notation was
+  // something else: right on 112 of 369 sampled steps, and directly
+  // contradicted by the "no edge moves at all" line three paragraphs above it.
+  const footnote = useMemo(() => stepFootnote(step), [step]);
 
   /**
    * Belt and braces for Dynamic Type: the sheet is sized to hold every variant
@@ -71,7 +77,7 @@ export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Pro
         <Notation moves={step.moves} variant="blocks" rawBelow={4} />
 
         <Text style={styles.overline}>What it does</Text>
-        {alg?.note && <Text style={styles.para}>{alg.note}</Text>}
+        {note && <Text style={styles.para}>{note}</Text>}
         <Text style={styles.para}>{step.detail}</Text>
 
         {watching.length > 0 && (
@@ -87,13 +93,11 @@ export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Pro
           </>
         )}
 
-        {alg && (
-          <Text style={styles.footnote}>
-            {alg.corners} corner{alg.corners === 1 ? '' : 's'} and {alg.edges} edge
-            {alg.edges === 1 ? '' : 's'} move; the other{' '}
-            {20 - alg.corners - alg.edges} pieces do not.
+        {footnote.map((line, i) => (
+          <Text key={line} style={[styles.footnote, i > 0 && styles.footnoteNext]}>
+            {line}
           </Text>
-        )}
+        ))}
       </ScrollView>
 
       {overflows && (
@@ -182,6 +186,7 @@ const styles = StyleSheet.create({
   watchDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4, backgroundColor: cube.moving },
   watchText: { ...type.caption, color: text.secondary, flex: 1 },
   footnote: { ...type.caption, color: text.tertiary, marginTop: space.sm },
+  footnoteNext: { marginTop: 0 },
   actions: {
     flexDirection: 'row',
     gap: space.sm,

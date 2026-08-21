@@ -36,7 +36,7 @@ const DEFS: AlgorithmDef[] = [
   { id: 'pll-aa', name: 'Aa perm', category: 'PLL', alg: "x R' U R' D2 R U' R' D2 R2 x'", note: 'Corner 3-cycle' },
   { id: 'pll-ab', name: 'Ab perm', category: 'PLL', alg: "x R2 D2 R U R' D2 R U' R x'", note: 'Corner 3-cycle' },
   { id: 'pll-e', name: 'E perm', category: 'PLL', alg: "x' R U' R' D R U R' D' R U R' D R U' R' D' x", note: 'Two corner swaps' },
-  { id: 'pll-f', name: 'F perm', category: 'PLL', alg: "R' U' F' R U R' U' R' F R2 U' R' U' R U R' U R", note: 'Adjacent swap + edge 3-cycle' },
+  { id: 'pll-f', name: 'F perm', category: 'PLL', alg: "R' U' F' R U R' U' R' F R2 U' R' U' R U R' U R", note: 'Adjacent corner swap + edge swap' },
   { id: 'pll-ga', name: 'Ga perm', category: 'PLL', alg: "R2 U R' U R' U' R U' R2 U' D R' U R D' U", note: 'Corner + edge 3-cycle (final AUF included)' },
   { id: 'pll-gb', name: 'Gb perm', category: 'PLL', alg: "R' U' R U D' R2 U R' U R U' R U' R2 D U", note: 'Corner + edge 3-cycle (final AUF included)' },
   { id: 'pll-gc', name: 'Gc perm', category: 'PLL', alg: "R2 U' R U' R U R' U R2 U D' R U' R' D U", note: 'Corner + edge 3-cycle (final AUF included)' },
@@ -58,8 +58,8 @@ const DEFS: AlgorithmDef[] = [
       'one pass - four pieces, and nothing else on the cube. Running it a second time undoes it ' +
       'exactly, which is a quick way to check you have performed it correctly.',
   },
-  { id: 'pll-ua', name: 'Ua perm', category: 'PLL', alg: "M2 U M U2 M' U M2", note: 'Edge 3-cycle, clockwise' },
-  { id: 'pll-ub', name: 'Ub perm', category: 'PLL', alg: "M2 U' M U2 M' U' M2", note: 'Edge 3-cycle, anticlockwise' },
+  { id: 'pll-ua', name: 'Ua perm', category: 'PLL', alg: "M2 U M U2 M' U M2", note: 'Edge 3-cycle anticlockwise seen from above; the back edge stays put' },
+  { id: 'pll-ub', name: 'Ub perm', category: 'PLL', alg: "M2 U' M U2 M' U' M2", note: 'Edge 3-cycle clockwise seen from above; the back edge stays put' },
   { id: 'pll-v', name: 'V perm', category: 'PLL', alg: "R' U R' U' y R' F' R2 U' R' U R' F R F y'", note: 'Diagonal corner + edge swap' },
   { id: 'pll-y', name: 'Y perm', category: 'PLL', alg: "F R U' R' U' R U R' F' R U R' U' R' F R F'" },
   { id: 'pll-z', name: 'Z perm', category: 'PLL', alg: "M' U M2 U M2 U M' U2 M2 U'", note: 'Two edge swaps (final AUF included)' },
@@ -74,10 +74,11 @@ const DEFS: AlgorithmDef[] = [
     category: 'OLL',
     alg: "R U R' U R U2 R'",
     note:
-      'Twists three of the four top corners and leaves the fourth alone. R pulls the first two ' +
-      'layers apart and R\' puts them back inside the algorithm, which is how it can rearrange ' +
-      'the top without costing anything below. Repeat it - three goes at most - until the whole ' +
-      'top face is one colour.',
+      'Turns three of the four top corners the right way up. All four swap places and three ' +
+      'top edges cycle as they go - the stages after this one put those right, which is why it ' +
+      'does not matter yet. R takes the right-hand face out of the way and R\' puts it back ' +
+      'inside the algorithm, so the first two layers end up exactly as they were. Three goes at ' +
+      'most, from any case, until the whole top face is one colour.',
   },
   {
     id: 'oll-antisune',
@@ -85,9 +86,11 @@ const DEFS: AlgorithmDef[] = [
     category: 'OLL',
     alg: "R U2 R' U' R U' R'",
     note:
-      'Sune run the other way: the same three corners, twisted in the opposite direction. Use ' +
-      'whichever of the two needs fewer repetitions for the case in front of you - both leave ' +
-      'the first two layers exactly as they were.',
+      'Sune run backwards - one straight after the other leaves the cube exactly as it was. It ' +
+      'twists three top corners the opposite way, but not quite the same three: Sune turns the ' +
+      'two front corners and the back-left, this one turns the front-right and both back ' +
+      'corners. Like Sune it swaps all four top corners round and cycles three top edges, and ' +
+      'like Sune it leaves the first two layers exactly as they were.',
   },
   { id: 'oll-h', name: 'OLL H / double Sune', category: 'OLL', alg: "R U R' U R U' R' U R U2 R'" },
   { id: 'oll-pi', name: 'OLL Pi', category: 'OLL', alg: "R U2 R2 U' R2 U' R2 U2 R" },
@@ -102,7 +105,7 @@ const DEFS: AlgorithmDef[] = [
   { id: 'f2l-split-left', name: 'Split then insert (left)', category: 'F2L', alg: "F' U F U' F' U F" },
   { id: 'f2l-three-move', name: 'Three-move insert', category: 'F2L', alg: "R U' R'", note: 'Corner in slot, edge above' },
   { id: 'f2l-reset-slot', name: 'Pull pair out of slot', category: 'F2L', alg: "R U R'", note: 'Free a wrongly-built pair' },
-  { id: 'f2l-niklas', name: 'Niklas', category: 'F2L', alg: "R U' L' U R' U' L", note: 'Corner 3-cycle without breaking F2L' },
+  { id: 'f2l-niklas', name: 'Niklas', category: 'F2L', alg: "R U' L' U R' U' L", note: 'Corner 3-cycle, F2L untouched; the whole top layer ends a quarter turn round' },
   { id: 'f2l-niklas-mirror', name: 'Niklas (mirror)', category: 'F2L', alg: "L' U R U' L U R'" },
 
   // ---- Triggers: the small pieces everything is built from -------------
@@ -112,11 +115,11 @@ const DEFS: AlgorithmDef[] = [
     category: 'Triggers',
     alg: "R U R' U'",
     note:
-      'Takes the corner out of the front-right slot with R, spins the top, and puts it back a ' +
-      'third of a turn over. Only four corners and three edges ever move, all of them in the top ' +
-      'layer or that one slot, so the rest of the first layer is never at risk - and six ' +
-      'repetitions bring the cube back exactly to where it started, which is why you can keep ' +
-      'going until the corner lands the right way up.',
+      'Takes the corner out of the {slot} slot with {face}, spins the top, and puts it back a ' +
+      'third of a turn over. Seven pieces move in all: the corner and the edge in the {slot} ' +
+      'column, and five of the eight in the top layer - nothing else in the first two layers is ' +
+      'ever at risk. Six repetitions bring the cube back exactly to where it started, which is ' +
+      'why you can keep going until the corner lands the right way up.',
   },
   { id: 'trig-sexy-inv', name: 'Reverse sexy', category: 'Triggers', alg: "U R U' R'" },
   { id: 'trig-lefty', name: 'Lefty sexy', category: 'Triggers', alg: "L' U' L U" },
@@ -132,8 +135,8 @@ const DEFS: AlgorithmDef[] = [
     category: 'Beginner',
     alg: "U R U' R' U' F' U F",
     note:
-      'Sends the corner above the front-right slot up out of the way, drops the edge into the ' +
-      'gap behind it, then puts the corner straight back. The two halves are mirror images of ' +
+      'Lifts the first-layer corner out of the front-right slot, drops the edge into the gap ' +
+      'behind it, then puts the corner straight back. The two halves are mirror images of ' +
       'each other - U R U\' R\' and then U\' F\' U F - which is why the first layer ends up ' +
       'untouched even though it comes apart in the middle.',
   },
@@ -144,8 +147,8 @@ const DEFS: AlgorithmDef[] = [
     alg: "U' L' U L U F U' F'",
     note:
       'The same insertion mirrored, for an edge that has to travel left instead of right. The ' +
-      'corner above the front-left slot is lifted, the edge is fed in underneath it, and the ' +
-      'corner is put back - so nothing already finished below is disturbed.',
+      'first-layer corner is lifted out of the front-left slot, the edge is fed in underneath ' +
+      'it, and the corner is put back - so nothing already finished below is disturbed.',
   },
   {
     id: 'beg-cross',
@@ -164,10 +167,11 @@ const DEFS: AlgorithmDef[] = [
     category: 'Beginner',
     alg: "U R U' L' U R' U' L",
     note:
-      'Sends three top corners round in a ring and leaves the fourth exactly where it is. No ' +
-      'edge moves at all, which is what makes it safe to run before the edges are sorted out. ' +
-      'Find a corner that is already home, hold it at the front-right, and one or two goes place ' +
-      'the other three.',
+      'Sends three top corners round in a ring and leaves the fourth exactly where it is. The ' +
+      'algorithm on its own moves no edge at all, which is what makes it safe to run before the ' +
+      'edges are sorted out - a setup turn in front of it carries the whole top round, but it ' +
+      'keeps the edges in the same order as each other. Find a corner that is already home, hold ' +
+      'it at the front-right, and one or two goes place the other three.',
   },
   {
     id: 'beg-corner-pos-rev',
@@ -175,9 +179,9 @@ const DEFS: AlgorithmDef[] = [
     category: 'Beginner',
     alg: "L' U R U' L U R' U'",
     note:
-      'The same corner ring, sent round the other way. Three corners move, the fourth and every ' +
-      'edge stay put. Picking the direction that needs one go rather than two is the whole ' +
-      'reason for learning both.',
+      'The same corner ring, sent round the other way. Three corners move and the fourth stays ' +
+      'put; the algorithm on its own leaves every edge alone. Picking the direction that needs ' +
+      'one go rather than two is the whole reason for learning both.',
   },
   { id: 'beg-corner-orient', name: 'Orient last corners', category: 'Beginner', alg: "R' D' R D R' D' R D", note: 'Repeat per corner, keep U facing you' },
   {
@@ -186,9 +190,9 @@ const DEFS: AlgorithmDef[] = [
     category: 'Beginner',
     alg: "R U' R U R U R U' R' U' R2",
     note:
-      'Sends three top edges round and leaves the fourth alone. Not one corner moves, so the ' +
-      'corners you have just placed cannot be knocked out. Hold the edge that is already correct ' +
-      'at the back; if none of them is correct, one run from anywhere fixes one and the second ' +
+      'Sends three top edges round and leaves the fourth alone. The algorithm on its own moves ' +
+      'not one corner, so the corners you have just placed cannot be knocked out. Hold the edge ' +
+      'that is already correct at the back; if none of them is correct, one run from anywhere fixes one and the second ' +
       'run finishes the cube.',
   },
   {
@@ -197,8 +201,9 @@ const DEFS: AlgorithmDef[] = [
     category: 'Beginner',
     alg: "R2 U R U R' U' R' U' R' U R'",
     note:
-      'The same three edges sent round the other way. Corners are untouched here too. Reading ' +
-      'which way the three need to travel before you start is what turns two runs into one.',
+      'The same three edges sent round the other way. The algorithm leaves every corner ' +
+      'untouched here too. Reading which way the three need to travel before you start is what ' +
+      'turns two runs into one.',
   },
   {
     id: 'beg-auf',

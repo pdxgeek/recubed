@@ -3,7 +3,7 @@
  * through the app's own facelet engine and confirm the cube ends up solved.
  * This covers the whole-cube setup rotation that the beginner solve starts with.
  */
-import { CubeState, SLOTS, applyAlg, isSolved, solvedState, parseAlg, vecKey } from '../src/cube/core';
+import { CubeState, Move, SLOTS, applyAlg, isSolved, solvedState, parseAlg, vecKey } from '../src/cube/core';
 import { BASIC_MOVES } from '../src/cube/cubie';
 import {
   algorithmForStep,
@@ -14,9 +14,12 @@ import {
   describeCubie,
   nameOfPieceKey,
   piecesToWatch,
+  noteForStep,
   relabelMethod,
   stageProgress,
+  stepFootnote,
 } from '../src/cube/solver/plan';
+import { CUBIES, SLOTS_BY_CUBIE, cubieKind } from '../src/cube/core';
 import { ROTATIONS } from '../src/cube/orientation';
 
 let seed = Number(process.argv[3] ?? 5150);
@@ -331,6 +334,120 @@ for (let i = 0; i < N; i++) {
     console.log(
       `ok    all ${checked} steps name their own pieces and keep naming them ` +
       `(the slot-based list would have drifted on ${positionalWouldDrift})`
+    );
+  }
+}
+
+// --- the piece count under the sheet is THIS step's, not the algorithm's ----
+//
+// The footnote used to state the algorithm's effect on a solved cube while the
+// sheet was open on a step, showed that step's notation and played that step's
+// moves. Measured over 369 steps it was right on 112. The dominant cause is
+// that a step's AUF setup turns are part of `step.moves` and turn the whole top
+// layer, so `beg-corner-pos` - whose prose says "no edge moves at all" - was
+// printed over notation that moved four.
+//
+// Counted here independently of `src/cube/effect.ts`: by comparing the colours
+// on each cubie before and after, rather than by sticker tracking.
+{
+  /** Pieces whose stickers differ after `moves`, counted the long way round. */
+  const movedTheOtherWay = (before: CubeState, moves: Move[]) => {
+    const after = applyAlg(before, moves);
+    let corners = 0;
+    let edges = 0;
+    for (const p of CUBIES) {
+      const kind = cubieKind(p);
+      if (kind < 2) continue;
+      const slots = SLOTS_BY_CUBIE.get(vecKey(p)) ?? [];
+      if (slots.every((i) => before.colors[i] === after.colors[i])) continue;
+      if (kind === 3) corners++;
+      else edges++;
+    }
+    return { corners, edges };
+  };
+  const spell = (n: number, one: string) =>
+    n === 0 ? `no ${one}s` : n === 1 ? `1 ${one}` : `${n} ${one}s`;
+
+  let checked = 0;
+  let wrong = 0;
+  let missing = 0;
+  let algWouldBeWrong = 0;
+  let faceChecked = 0;
+  let faceWrong = 0;
+  const examples: string[] = [];
+
+  for (let i = 0; i < 6; i++) {
+    const start = applyAlg(solvedState(), scramble());
+    const plan = buildPlan(start);
+    if (!plan.ok) continue;
+    const beginner = plan.methods.find((m) => m.id === 'beginner');
+    if (!beginner) continue;
+    for (const st of beginner.steps) {
+      const alg = algorithmForStep(st);
+      if (!alg) continue;
+      checked++;
+
+      const base = applyAlg(start, st.prelude);
+      const real = movedTheOtherWay(base, st.moves);
+      const said = stepFootnote(st)[0] ?? '';
+      const want = `This step moves ${spell(real.corners, 'corner')} and ${spell(real.edges, 'edge')};`;
+      if (!said) {
+        missing++;
+      } else if (!said.startsWith(want)) {
+        wrong++;
+        if (examples.length < 4) examples.push(`${st.algorithm}: "${said}" but the moves move ${want}`);
+      }
+      if (alg.corners !== real.corners || alg.edges !== real.edges) algWouldBeWrong++;
+
+      // The note is filled in for the face this step actually plays.
+      //
+      // All four first-layer corner slots teach `trig-sexy`, so all four used
+      // to be explained "takes the corner out of the front-right slot with R"
+      // - and 74% of those steps contain no R turn at all. Both halves are
+      // checked: no placeholder survives, and the face the note names is a
+      // face the step really turns.
+      const note = noteForStep(st) ?? '';
+      if (/\{\w+\}/.test(note)) {
+        wrong++;
+        if (examples.length < 4) examples.push(`${st.algorithm}: note still has a placeholder in it`);
+      }
+      const face = st.noteVars?.face;
+      if (/\{\w+\}/.test(alg.note ?? '') && !face) {
+        faceWrong++;
+        faceChecked++;
+        if (examples.length < 4) {
+          examples.push(`${st.algorithm}: the library note is written per face and the step does not say which`);
+        }
+      } else if (face) {
+        faceChecked++;
+        if (!st.moves.some((m) => m.notation[0] === face)) {
+          faceWrong++;
+          if (examples.length < 4) {
+            examples.push(`${st.algorithm}: the note explains ${face}, the step never turns ${face} (${st.notation})`);
+          }
+        }
+        if (st.noteVars?.slot && !st.detail.includes(st.noteVars.slot)) {
+          faceWrong++;
+          if (examples.length < 4) {
+            examples.push(`${st.algorithm}: the detail does not name the ${st.noteVars.slot} slot`);
+          }
+        }
+      }
+    }
+  }
+
+  if (wrong || missing || faceWrong) {
+    fails++;
+    console.log(
+      `FAIL  the sheet's piece count is wrong on ${wrong} of ${checked} steps ` +
+      `(${missing} with no count at all, ${faceWrong} of ${faceChecked} explaining the wrong face or slot)`
+    );
+    for (const e of examples) console.log(`      ${e}`);
+  } else {
+    console.log(
+      `ok    all ${checked} steps print the count their own moves produce ` +
+      `(the algorithm's count would have been wrong on ${algWouldBeWrong}); ` +
+      `all ${faceChecked} trigger steps explain a face they actually turn`
     );
   }
 }

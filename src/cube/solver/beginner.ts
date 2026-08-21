@@ -39,6 +39,17 @@ export interface SolveStep {
    * asserts every step carries one that resolves to an entry with a note.
    */
   algorithmId?: string;
+  /**
+   * Values for the placeholders in that library entry's note.
+   *
+   * All four first-layer corner slots teach the same trigger, so all four
+   * carry `algorithmId: 'trig-sexy'` - and for a round the sheet therefore
+   * explained `R U R' U'` and the front-right slot on top of a step that
+   * played `B U B' U'` into the back-right one. 74% of those steps used no R
+   * turn at all. The note is written with `{face}` and `{slot}` in it and the
+   * step says which face it is actually playing.
+   */
+  noteVars?: Record<string, string>;
   moves: Move[];
   /**
    * The piece this step is dealing with, where it sits as the step begins.
@@ -128,8 +139,8 @@ const PERMUTE_CORNERS: NamedAlg[] = [
   { id: 'pll-t', name: 'T perm (swap two corners and two edges)', alg: "R U R' U' R' F R2 U' R' U' R U R' F'" },
 ];
 const PERMUTE_EDGES: NamedAlg[] = [
-  { id: 'beg-edge-cycle', name: 'Edge 3-cycle (clockwise)', alg: "R U' R U R U R U' R' U' R2" },
-  { id: 'beg-edge-cycle-rev', name: 'Edge 3-cycle (anticlockwise)', alg: "R2 U R U R' U' R' U' R' U R'" },
+  { id: 'beg-edge-cycle', name: 'Edge 3-cycle (anticlockwise)', alg: "R U' R U R U R U' R' U' R2" },
+  { id: 'beg-edge-cycle-rev', name: 'Edge 3-cycle (clockwise)', alg: "R2 U R U R' U' R' U' R' U R'" },
 ];
 /** A bare U turn to finish on, which is a step in the plan like any other. */
 const LINE_UP: NamedAlg = { id: 'beg-auf', name: 'Line the top layer up', alg: 'U' };
@@ -251,11 +262,14 @@ function solveCross(cube: CubieCube): { cube: CubieCube; stage: SolveStage } {
  * sexy move until it drops in. It disturbs nothing in the cross and no other
  * first-layer corner, which is exactly why it is the one beginners learn.
  */
-const CORNER_INSERT: Record<number, { alg: string; name: string; id: string; above: number }> = {
-  [Corner.DFR]: { alg: "R U R' U'", name: 'Sexy move', id: 'trig-sexy', above: Corner.URF },
-  [Corner.DLF]: { alg: "F U F' U'", name: 'Sexy move (front)', id: 'trig-sexy', above: Corner.UFL },
-  [Corner.DBL]: { alg: "L U L' U'", name: 'Sexy move (left)', id: 'trig-sexy', above: Corner.ULB },
-  [Corner.DRB]: { alg: "B U B' U'", name: 'Sexy move (back)', id: 'trig-sexy', above: Corner.UBR },
+const CORNER_INSERT: Record<
+  number,
+  { alg: string; name: string; id: string; above: number; face: string; slot: string }
+> = {
+  [Corner.DFR]: { alg: "R U R' U'", name: 'Sexy move', id: 'trig-sexy', above: Corner.URF, face: 'R', slot: 'front-right' },
+  [Corner.DLF]: { alg: "F U F' U'", name: 'Sexy move (front)', id: 'trig-sexy', above: Corner.UFL, face: 'F', slot: 'front-left' },
+  [Corner.DBL]: { alg: "L U L' U'", name: 'Sexy move (left)', id: 'trig-sexy', above: Corner.ULB, face: 'L', slot: 'back-left' },
+  [Corner.DRB]: { alg: "B U B' U'", name: 'Sexy move (back)', id: 'trig-sexy', above: Corner.UBR, face: 'B', slot: 'back-right' },
 };
 
 function solveFirstCorners(cube: CubieCube): { cube: CubieCube; stage: SolveStage } {
@@ -269,11 +283,15 @@ function solveFirstCorners(cube: CubieCube): { cube: CubieCube; stage: SolveStag
     const insert = CORNER_INSERT[target];
 
     // Stuck in the bottom layer the wrong way round: knock it out with the
-    // same algorithm, then put it in properly.
+    // same algorithm, then put it in properly. Those four moves open a quarter
+    // of these steps and used to go unmentioned, so the explanation described
+    // an insertion the notation did not begin with.
+    let ejected: { alg: string; slot: string } | null = null;
     if (FIRST_CORNERS.includes(findCorner(current, target))) {
-      const eject = CORNER_INSERT[findCorner(current, target)].alg;
-      current = applyAlgCubie(current, eject);
-      parts.push(eject);
+      const stuckIn = CORNER_INSERT[findCorner(current, target)];
+      current = applyAlgCubie(current, stuckIn.alg);
+      parts.push(stuckIn.alg);
+      ejected = { alg: stuckIn.alg, slot: stuckIn.slot };
     }
 
     // Turn the top until the corner sits directly above its slot.
@@ -305,11 +323,16 @@ function solveFirstCorners(cube: CubieCube): { cube: CubieCube; stage: SolveStag
     steps.push({
       title: '',
       detail:
-        `Hold the empty slot at the front-right with the corner in the top layer above it, ` +
-        `then repeat ${insert.alg} until it drops in. It comes out and goes back a little ` +
+        (ejected
+          ? `The corner is stuck in the ${ejected.slot} slot the wrong way round, so the step ` +
+            `opens with ${ejected.alg} to knock it out into the top layer. Then hold `
+          : `Hold `) +
+        `the empty slot at the ${insert.slot} with the corner in the top layer above it and ` +
+        `repeat ${insert.alg} until it drops in. It comes out and goes back a little ` +
         `differently each time until it lands the right way up.`,
       algorithm: insert.name,
       algorithmId: insert.id,
+      noteVars: { face: insert.face, slot: insert.slot },
       moves: parseAlg(parts.join(' ')),
       focus: [from],
       destination: CORNER_POSITION[target],

@@ -22,6 +22,7 @@ import {
   vecKey,
 } from '../core';
 import { Algorithm, ALGORITHMS_BY_ID } from '../algorithms';
+import { MOVABLE_PIECES, PieceCount, describeCount, piecesMoved } from '../effect';
 import { CubeError, colorToFaceMap, stateToCubie, isCubieSolved } from '../cubie';
 import { CubeRotation, relabelMoves } from '../orientation';
 import { SolveStage, solveBeginner } from './beginner';
@@ -47,6 +48,22 @@ export interface PlanStep {
    * algorithms the beginner plan uses - see `algorithmForStep`.
    */
   algorithmId?: string;
+  /**
+   * Values for the `{face}` / `{slot}` placeholders in that entry's note - see
+   * `SolveStep.noteVars` and `noteForStep`.
+   */
+  noteVars?: Record<string, string>;
+  /**
+   * What THESE moves do to THIS cube: pieces displaced by `moves`, measured
+   * against the cube as the step begins.
+   *
+   * Not the algorithm's count. The step's setup turns are part of `moves` and
+   * they turn the whole top layer, so the two differ on most steps - over 369
+   * sampled steps the algorithm-level number was right on 112. The sheet is
+   * opened on a step and its button plays that step, so the number under it
+   * has to be the step's. See `src/cube/effect.ts`.
+   */
+  effect?: PieceCount;
   /** The moves written out, for the learner to read and remember. */
   notation: string;
   moves: Move[];
@@ -227,6 +244,53 @@ export function algorithmForStep(step: PlanStep): Algorithm | undefined {
   return step.algorithmId ? ALGORITHMS_BY_ID.get(step.algorithmId) : undefined;
 }
 
+/**
+ * That entry's note, with the step's own face and slot filled in.
+ *
+ * `trig-sexy` is one library entry taught on four faces; its note is written
+ * with `{face}` and `{slot}` in it so a step that plays `B U B' U'` into the
+ * back-right slot is not explained in terms of `R` and the front-right one.
+ * Placeholders with no value fall back to the front-right form the algorithm
+ * is written in, so the library entry still reads as prose on its own.
+ */
+const NOTE_DEFAULTS: Record<string, string> = { face: 'R', slot: 'front-right' };
+
+export function noteForStep(step: PlanStep): string | undefined {
+  const note = algorithmForStep(step)?.note;
+  if (!note) return note;
+  return note.replace(/\{(\w+)\}/g, (whole, key: string) =>
+    step.noteVars?.[key] ?? NOTE_DEFAULTS[key] ?? whole
+  );
+}
+
+/**
+ * The sentences under the "why this works" sheet that count pieces.
+ *
+ * Two facts, kept apart on purpose. The first is about the step the learner is
+ * looking at, because that is what the notation above it and the button below
+ * it are. The second is about the algorithm, and is printed only when it says
+ * something different - which is the case the old single sentence got wrong,
+ * silently, on 70% of the steps it appeared on.
+ */
+export function stepFootnote(step: PlanStep): string[] {
+  const lines: string[] = [];
+  const alg = algorithmForStep(step);
+  if (step.effect) {
+    const rest = MOVABLE_PIECES - step.effect.corners - step.effect.edges;
+    lines.push(
+      `This step moves ${describeCount(step.effect)}; the other ${rest} ` +
+      `${rest === 1 ? 'piece stays' : 'pieces stay'} where they are.`
+    );
+  }
+  if (
+    alg &&
+    (!step.effect || alg.corners !== step.effect.corners || alg.edges !== step.effect.edges)
+  ) {
+    lines.push(`${alg.name} on its own moves ${describeCount(alg)}.`);
+  }
+  return lines;
+}
+
 /** A piece's name from its colour key - "white-green-orange corner". */
 export function nameOfPieceKey(key: string): string {
   const ids = key.split('') as ColorId[];
@@ -354,6 +418,8 @@ export function buildPlan(state: CubeState): SolvePlan {
           detail: step.detail,
           algorithm: step.algorithm,
           algorithmId: step.algorithmId,
+          noteVars: step.noteVars,
+          effect: piecesMoved(cursor, step.moves),
           notation: formatAlg(step.moves),
           moves: step.moves,
           prelude: [...prelude],
@@ -478,6 +544,7 @@ export function buildShortest(state: CubeState): PlanMethod {
           group: 'Advanced',
           title: `Solve in ${moves.length} moves`,
           detail: 'One sequence from here to solved. Step through it slowly and watch the pieces.',
+          effect: piecesMoved(state, moves),
           notation: formatAlg(moves),
           moves,
           prelude: [],
