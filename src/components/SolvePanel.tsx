@@ -3,9 +3,8 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { COLOR_IDS, COLOR_NAME, ColorId } from '../cube/core';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
 import { HighlightMode, PiecePair } from '../cube/pieces';
-import { Notation } from './Notation';
 import { Mastery } from '../learn/progress';
-import { tagFor } from '../ui/notation';
+import { stepRowLines } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
 interface Props {
@@ -292,7 +291,13 @@ export function SolvePanel({
               const newGroup = i === 0 || method.steps[i - 1].group !== step.group;
               // Not shown when it would repeat the title or a chunk's name:
               // the card used to read "… 25 › Sexy move · Sexy move · L U L' U'".
-              const tag = tagFor(step.title, step.algorithm, step.moves.map((m) => m.notation));
+              const notation = step.moves.map((m) => m.notation);
+              const lines = stepRowLines({
+                title: step.title,
+                algorithm: step.algorithm,
+                notation,
+                running: on,
+              });
               const learnt = masteryOf(step.algorithmId);
               return (
                 <View
@@ -341,58 +346,37 @@ export function SolvePanel({
                         step.algorithm ? `, ${step.algorithm}` : ''
                       }${learnt === 'known' ? ', known this session' : learnt === 'learning' ? ', learning' : ''}`}
                     >
-                      <View style={styles.stepHead}>
-                        {/* The marker carries "running"; the row keeps its name.
-                            It used to read "▸ Running", so the moment a step
-                            started the list stopped saying which step it was -
-                            and the row's own accessibility label with it. */}
-                        <Text style={[styles.stepTitle, on && styles.stepTitleOn]} numberOfLines={1}>
-                          {on ? `▸ ${step.title}` : step.title}
+                      {/* One line. The marker carries "running"; the row keeps
+                          its name. Everything else the row used to print - the
+                          move count, the notation summary, the chunked blocks
+                          under the running one - was teaching material on a
+                          screen whose job is to say where you are. */}
+                      <Text style={[styles.stepTitle, on && styles.stepTitleOn]} numberOfLines={1}>
+                        {on ? `▸ ${step.title}` : step.title}
+                      </Text>
+                    </Pressable>
+                    {/* THE NAME IS THE DOORWAY. It replaces the `?` circle that
+                        used to sit on every row: the same target, the same
+                        destination, but it says what it is about instead of
+                        making the reader guess, and it is a SIBLING of the row
+                        rather than a Pressable inside one - which is what round
+                        5 had to work around with absolute positioning.
+                        A row with no algorithm has nothing to teach and gets no
+                        button, so the title takes the whole width. */}
+                    {lines[1] && (
+                      <Pressable
+                        onPress={() => onExplain(step)}
+                        style={styles.why}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
+                        accessibilityHint="Opens the explanation"
+                      >
+                        <Text nativeID={on ? 'step-tag' : undefined} style={styles.whyText} numberOfLines={1}>
+                          {lines[1]}
                         </Text>
-                        <Text style={styles.stepCount}>{step.moves.length}</Text>
-                        {/* Keeps the title and the count clear of the `?`,
-                            which is out of flow above them. */}
-                        <View style={styles.whyGap} />
-                      </View>
-                      <View style={styles.stepMeta}>
-                        {!on && (
-                          <Notation
-                            moves={step.moves}
-                            variant="summary"
-                            numberOfLines={1}
-                            style={styles.notationFlex}
-                          />
-                        )}
-                        {tag && (
-                          // A stable handle, like the strip's `move-current`:
-                          // "does the row print its algorithm twice" is then
-                          // measurable rather than inferred from a text dump.
-                          <Text nativeID={on ? 'step-tag' : undefined} style={styles.tag} numberOfLines={1}>
-                            {tag}
-                          </Text>
-                        )}
-                      </View>
-                      {/* Practise mode covers the moves in the strip; the card
-                          must not print the answer underneath it. */}
-                      {on && !practising && (
-                        <Notation moves={step.moves} variant="blocks" rawBelow={4} />
-                      )}
-                    </Pressable>
-                    {/* Every row, not only the running one. Gating the
-                        explanation on playback meant a learner could not ask why
-                        anything worked until they had committed to watching it.
-                        A 44pt target, which the 36pt text link it replaces was
-                        not - and it costs the card no height, because it is out
-                        of flow over a row that already existed. */}
-                    <Pressable
-                      onPress={() => onExplain(step)}
-                      style={styles.why}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Why ${step.algorithm ?? step.title} works`}
-                      accessibilityHint="Explains what these moves do to the cube"
-                    >
-                      <Text style={styles.whyText}>?</Text>
-                    </Pressable>
+                        <Text style={styles.whyChevron}>›</Text>
+                      </Pressable>
+                    )}
                   </View>
                 </View>
               );
@@ -516,6 +500,7 @@ const styles = StyleSheet.create({
   },
   step: {
     flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: surface.raised,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -532,47 +517,34 @@ const styles = StyleSheet.create({
   railOn: { backgroundColor: accent.base },
   railLearning: { height: '40%', backgroundColor: status.warn },
   railKnown: { backgroundColor: status.ok },
-  stepBody: { flex: 1, paddingVertical: space.md, paddingHorizontal: 14, gap: space.xs },
-  stepHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
+  stepBody: { flex: 1, justifyContent: 'center', minHeight: hit.min, paddingVertical: space.sm, paddingHorizontal: 14 },
   stepTitle: { ...type.body, fontWeight: '600', color: text.secondary, flex: 1 },
   stepTitleOn: { color: text.primary },
-  stepCount: { ...type.caption, ...tokens.numeric, color: text.tertiary },
-  chevron: { ...type.heading, color: text.tertiary },
-  stepMeta: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
-  notationFlex: { flex: 1 },
-  stepDetail: { ...type.caption, color: text.secondary, marginTop: space.xs },
   // A real 44pt target, and square, so it reads as a button rather than as the
   // decorative chevron it replaces.
   // Out of flow, over the head line of the row it belongs to. `top` is the
   // body's own vertical padding less what the old negative margin took, so the
   // button is where it has always been - the change is that it is no longer a
   // Pressable inside a Pressable.
+  // A sibling of the row, in flow beside it: no nesting, no absolute
+  // positioning, no reserved gap. A real 44pt target that says where it goes.
   why: {
-    position: 'absolute',
-    right: 14,
-    top: space.md - space.sm,
-    minWidth: hit.min,
-    minHeight: hit.min,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 2,
+    flexShrink: 1,
+    maxWidth: '46%',
+    minHeight: hit.min,
+    paddingHorizontal: space.sm,
+    marginRight: space.sm,
+    marginVertical: 6,
     borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: line.outline,
-  },
-  /** The space the absolutely-positioned `?` needs kept clear in the head row. */
-  whyGap: { width: hit.min },
-  whyText: { ...type.heading, fontWeight: '700', color: accent.base },
-  tag: {
-    ...type.overline,
-    flexShrink: 1,
-    maxWidth: '52%',
-    color: text.primary,
     backgroundColor: accent.soft,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    overflow: 'hidden',
   },
+  whyText: { ...type.overline, color: text.primary, flexShrink: 1 },
+  whyChevron: { ...type.caption, color: accent.base },
 
   // -- mode footer ----------------------------------------------------------
   modes: {

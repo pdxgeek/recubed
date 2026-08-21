@@ -102,10 +102,14 @@ export function TopBar({ mode, onMode, view, onView, wireframe, onWireframe, onR
             onPress={onResetView}
             style={styles.btn}
             accessibilityRole="button"
-            accessibilityLabel="Reset the view"
+            accessibilityLabel="Turn the cube upright"
           >
+            {/* Was "Reset". The app had three reset-ish verbs on screen at once
+                - Reset here, Start over on the paint panel, Restart this step on
+                the transport - for three unrelated things. This one turns the
+                cube back to the front and says so. */}
             <Text style={styles.btnText} maxFontSizeMultiplier={1.4}>
-              Reset
+              Upright
             </Text>
           </Pressable>
         )}

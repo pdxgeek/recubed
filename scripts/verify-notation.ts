@@ -19,7 +19,16 @@
 import { applyAlg, solvedState } from '../src/cube/core';
 import { ALGORITHMS, TRIGGERS, chunkByTriggers } from '../src/cube/algorithms';
 import { buildPlan } from '../src/cube/solver/plan';
-import { baseName, maskMoveRuns, notationBlocks, summaryLine, tagFor } from '../src/ui/notation';
+import {
+  baseName,
+  maskMoveRuns,
+  notationBlocks,
+  printsMoves,
+  stepRowLines,
+  stripHeading,
+  summaryLine,
+  tagFor,
+} from '../src/ui/notation';
 
 let fails = 0;
 const check = (name: string, ok: boolean, extra = '') => {
@@ -228,6 +237,86 @@ const words = (s: string) => s.trim().split(/\s+/);
       `${runs} runs left`
     );
   }
+}
+
+// -- 6. ONE RENDERING OF A MOVE SEQUENCE AT A TIME ---------------------------
+//
+// Round 6, from the user with their phone in their hand: "here you show it
+// twice". The strip printed `Reverse sexy` over four chips and the step card
+// ten points below printed the same four moves under the same label again.
+// The rule now is that the strip owns the notation, because the strip has the
+// playhead; a row carries a NAME and never a second copy of the moves.
+//
+// Both halves of this are checked against every step of real plans, so a
+// component that starts printing notation again fails here rather than in a
+// screenshot nobody takes.
+{
+  const scrambles = [
+    "R U R' U' F2 L D B' R2 U' L' B R D2 F",
+    "D2 F' L2 B U R' F2 D L B2 R' U2 F D' L2",
+    "B L2 U' R F D2 B' L U2 R2 F' D B2 U L'",
+  ];
+  let rows = 0;
+  let printed = 0;
+  let running = 0;
+  let named = 0;
+  let repeats = 0;
+  for (const scramble of scrambles) {
+    const plan = buildPlan(applyAlg(solvedState(), scramble));
+    for (const method of plan.methods) {
+      for (const st of method.steps) {
+        const notation = st.moves.map((m) => m.notation);
+        for (const isRunning of [false, true]) {
+          const lines = stepRowLines({
+            title: st.title,
+            algorithm: st.algorithm,
+            notation,
+            running: isRunning,
+          });
+          rows++;
+          if (lines.some(printsMoves)) printed++;
+          if (isRunning && lines.length !== 1) running++;
+          // A row never says the same words twice, which is the older rule of
+          // this file kept honest against the new one.
+          const seen = lines.map(baseName);
+          if (new Set(seen).size !== seen.length) repeats++;
+          if (!isRunning && lines.length === 2) named++;
+        }
+      }
+    }
+  }
+  check(`no step row prints a move, over ${rows} rows of real plans`, printed === 0, `${printed} did`);
+  check('the running row prints its name and nothing else', running === 0, `${running} printed more`);
+  check('no row prints the same name twice', repeats === 0, `${repeats} did`);
+  check('rows that teach an algorithm still name it', named > 0, `${named} named`);
+}
+
+// -- 7. the strip's heading follows the playhead -----------------------------
+//
+// The heading is the only place the algorithm is named during playback and the
+// only doorway from solving into teaching, so "does it say what is happening
+// right now" is the whole of its job. Checked on a sequence whose chunking is
+// known: a T perm's own moves, run after a setup turn that belongs to nothing.
+{
+  const notation = "D R U R' U' R' F R2 U' R' U' R U R' F'".split(' ');
+  const blocks = notationBlocks(notation);
+  const title = 'Swap the two front corners';
+  let wrong = 0;
+  for (let i = 0; i < notation.length; i++) {
+    const want =
+      blocks.find((b) => i >= b.start && i < b.start + b.all.length)?.label ?? title;
+    if (stripHeading(notation, i, title) !== want) wrong++;
+  }
+  check(`the heading names the chunk under the playhead at all ${notation.length} moves`, wrong === 0);
+  check('an unnamed stretch of moves falls back to the step title',
+    stripHeading(notation, 0, title) === title, stripHeading(notation, 0, title));
+  const distinct = new Set(notation.map((_, i) => stripHeading(notation, i, title)));
+  check('the heading changes as the playhead crosses into another trigger', distinct.size > 1,
+    [...distinct].join(' / '));
+  // Out-of-range indices are what an empty or finished step hands it.
+  check('a playhead past the end still has a heading',
+    stripHeading(notation, 99, title).length > 0);
+  check('an empty sequence falls back to the title', stripHeading([], 0, title) === title);
 }
 
 console.log(fails ? `\n${fails} notation check(s) failed` : '\nall notation checks passed');

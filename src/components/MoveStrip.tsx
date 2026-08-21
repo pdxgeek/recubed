@@ -3,15 +3,21 @@ import { LayoutChangeEvent, Pressable, ScrollView, StyleSheet, Text, View } from
 import { Move } from '../cube/core';
 import { chunkByTriggers } from '../cube/algorithms';
 import { Recall } from '../learn/session';
+import { stripHeading } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
 interface Props {
   title: string;
   moves: Move[];
   step: number;
-  /** The scoped X-ray control: it lives here because it acts on the canvas. */
-  wireframe: boolean;
-  onWireframe: (v: boolean) => void;
+  /**
+   * Opens the teaching page for this step.
+   *
+   * The heading is the doorway: "in the solving part, we just show the name,
+   * and if they click the name we can open the teaching page". Solving says
+   * where you are; teaching happens when it is asked for.
+   */
+  onExplain: () => void;
   /** Practise mode: the moves ahead are covered and revealed one at a time. */
   practising: boolean;
   onPractise: (v: boolean) => void;
@@ -42,8 +48,7 @@ export function MoveStrip({
   title,
   moves,
   step,
-  wireframe,
-  onWireframe,
+  onExplain,
   practising,
   onPractise,
   onReveal,
@@ -96,9 +101,17 @@ export function MoveStrip({
     viewport.current = e.nativeEvent.layout.width;
   }, []);
 
-  // Only give the labels a row when there is something to put in it.
-  const labelled = chunks.some((c) => c.label);
   const done = Math.min(step, moves.length);
+  /**
+   * The name of the trigger the playhead is inside, or the step's own title
+   * when this stretch of moves is not a named one. `src/ui/notation.ts` decides
+   * it, so `verify-notation.ts` can check that it tracks the playhead.
+   */
+  const heading = stripHeading(
+    moves.map((m) => m.notation),
+    step,
+    title
+  );
   const label =
     `${title}. Move ${Math.min(step + 1, moves.length)} of ${moves.length}: ` +
     `${spoken(moves[Math.min(step, moves.length - 1)]?.notation ?? '')}`;
@@ -106,11 +119,28 @@ export function MoveStrip({
   return (
     <View style={styles.wrap} pointerEvents="box-none">
       <View style={styles.headerRow}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
-        {/* Scoped X-ray. In the panel it cost a row of the step list; here it is
-            over the canvas it acts on and costs no panel height at all. */}
+        {/* The one place the algorithm is named during playback, so it carries
+            the weight the step card's title used to. It changes as the playhead
+            crosses into the next trigger, which is the teaching moment: these
+            four moves, the ones happening now, are the thing called Reverse
+            sexy. */}
+        <Pressable
+          onPress={onExplain}
+          style={styles.headingButton}
+          accessibilityRole="button"
+          accessibilityLabel={`Why ${heading} works`}
+          accessibilityHint="Opens the explanation"
+        >
+          <Text
+            nativeID="strip-heading"
+            style={styles.heading}
+            numberOfLines={1}
+            accessibilityLiveRegion="polite"
+          >
+            {heading}
+          </Text>
+          <Text style={styles.headingChevron}>›</Text>
+        </Pressable>
         <Pressable
           onPress={() => onPractise(!practising)}
           style={[styles.only, practising && styles.onlyOn]}
@@ -120,17 +150,6 @@ export function MoveStrip({
           accessibilityLabel="Practise mode: hide the moves ahead"
         >
           <Text style={[styles.onlyText, practising && styles.onlyTextOn]}>practise</Text>
-        </Pressable>
-        <Pressable
-          onPress={() => onWireframe(!wireframe)}
-          style={[styles.only, wireframe && styles.onlyOn]}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: wireframe }}
-          aria-checked={wireframe}
-          accessibilityLabel="Show only the pieces this step moves"
-        >
-          <View style={[styles.onlyDot, wireframe && styles.onlyDotOn]} />
-          <Text style={[styles.onlyText, wireframe && styles.onlyTextOn]}>only these</Text>
         </Pressable>
       </View>
       <View style={styles.track} pointerEvents="none">
@@ -157,17 +176,6 @@ export function MoveStrip({
               chunkX.current[ci] = e.nativeEvent.layout.x;
             }}
           >
-            {labelled &&
-              (chunk.label ? (
-                <Text style={styles.chunkLabel} numberOfLines={1}>
-                  {chunk.label}
-                  {chunk.repeat > 1 ? ` ×${chunk.repeat}` : ''}
-                </Text>
-              ) : (
-                // A space-only Text collapses, leaving the chunk 14pt taller
-                // than its neighbours. A spacer does not.
-                <View style={styles.chunkLabelSpacer} />
-              ))}
             <View style={[styles.chunkRow, chunk.label ? styles.chunkRowNamed : null]}>
               {moves.slice(chunk.start, chunk.start + chunk.length).map((m, k) => {
                 const i = chunk.start + k;
@@ -288,7 +296,20 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.gutter,
   },
-  title: { ...type.caption, fontWeight: '600', color: text.secondary, flex: 1 },
+  // The card's title weight, moved here: this is now the only place the
+  // algorithm is named while the moves play, and the only doorway from solving
+  // into teaching. A 44pt target with a chevron, so it reads as a way through
+  // rather than as a caption.
+  headingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+    minHeight: hit.min,
+    paddingRight: space.sm,
+  },
+  heading: { ...type.heading, fontWeight: '700', color: text.primary, flexShrink: 1 },
+  headingChevron: { ...type.heading, color: accent.base },
   only: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -299,15 +320,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: line.outline,
   },
-  onlyDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: line.outline,
-    backgroundColor: 'transparent',
-  },
-  onlyDotOn: { backgroundColor: accent.base, borderColor: accent.base },
   onlyOn: { borderColor: accent.base, borderWidth: 2 },
   onlyText: { ...type.overline, color: text.secondary },
   onlyTextOn: { color: text.primary },
@@ -321,10 +333,6 @@ const styles = StyleSheet.create({
   fill: { height: 3, backgroundColor: accent.base },
   chips: { gap: space.sm, paddingHorizontal: space.gutter, paddingVertical: 2 },
   chunk: { gap: 2 },
-  // Left-aligned: a "Sexy move ×5" chunk is 900pt wide on a tablet, and a
-  // centred label floats half a screen away from the chunk it names.
-  chunkLabel: { ...type.overline, color: text.tertiary, textAlign: 'left', paddingLeft: 3 },
-  chunkLabelSpacer: { height: type.overline.lineHeight },
   chunkRow: { flexDirection: 'row', gap: 6, paddingHorizontal: 3, borderRadius: radius.sm },
   // The bracket is the only thing that groups a named chunk, which makes it a
   // control boundary rather than a divider: it needs the 3:1 token, not the

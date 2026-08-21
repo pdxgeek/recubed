@@ -57,7 +57,6 @@ import {
   currentShortest,
   prepareShortest,
   relabelMethod,
-  stageProgress,
 } from './src/cube/solver/plan';
 import { CubeScene } from './src/render/CubeScene';
 import { CubeCanvas } from './src/components/CubeCanvas';
@@ -238,12 +237,6 @@ export default function App() {
   );
 
   const targetKeys = useMemo(() => focusSlots.map((i) => vecKey(SLOTS[i].pos)), [focusSlots]);
-
-  /** Where the running step sits in the method's stages, for the transport bar. */
-  const runStage = useMemo(
-    () => stageProgress(plan, playback?.step.id ?? null),
-    [plan, playback]
-  );
 
   // -- scene sync ----------------------------------------------------------
 
@@ -711,8 +704,13 @@ export default function App() {
               title={playback.step.title}
               moves={playback.step.moves}
               step={step}
-              wireframe={wireframe}
-              onWireframe={setWireframe}
+              // Tapping the name is how solving reaches teaching. The step is
+              // already open, so this is the same sheet the list's own name
+              // button opens - one destination, two doorways, no third surface.
+              onExplain={() => {
+                setExplaining(playback.step);
+                setLearn((st) => watchedAlgorithm(st, playback.step.algorithmId));
+              }}
               practising={practising}
               onPractise={onPractise}
               onReveal={() => {
@@ -818,7 +816,6 @@ export default function App() {
           atEnd={playbackAtEnd(playback)}
           playing={playing}
           speedMs={speedMs}
-          stage={runStage}
           onPrev={stepBack}
           onNext={
             practising

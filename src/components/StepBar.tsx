@@ -1,7 +1,12 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { StageProgress } from '../cube/solver/plan';
 import { tokens } from '../ui/theme';
+
+/** Which of the three speeds a millisecond value is, defaulting to the middle. */
+export const speedIndex = (ms: number) => {
+  const i = SPEEDS.findIndex((s) => s.ms === ms);
+  return i < 0 ? 1 : i;
+};
 
 export const SPEEDS = [
   { label: 'Slow', short: '1×', ms: 1400 },
@@ -14,11 +19,6 @@ interface Props {
   atEnd: boolean;
   playing: boolean;
   speedMs: number;
-  /**
-   * Where this step sits in the method's stages. Shown in the counter slot that
-   * already existed, so the rail costs no height on a phone.
-   */
-  stage?: StageProgress | null;
   onPrev: () => void;
   /** Null while practising: the moves ahead are covered, so Next would spoil it. */
   onNext: (() => void) | null;
@@ -40,7 +40,6 @@ export function StepBar({
   atEnd,
   playing,
   speedMs,
-  stage,
   onPrev,
   onNext,
   onPlayPause,
@@ -49,37 +48,9 @@ export function StepBar({
   closeLabel = 'Undo',
   onClose,
 }: Props) {
+  const speed = SPEEDS[speedIndex(speedMs)];
   return (
     <View style={styles.outer}>
-      <View style={styles.head}>
-        <View style={styles.stage}>
-          <Text style={styles.position} numberOfLines={1}>
-            {stage ? `${stage.group} · ${stage.step} of ${stage.steps}` : ''}
-          </Text>
-          <View style={styles.stageTrack}>
-            <View
-              style={[
-                styles.stageFill,
-                { width: `${stage ? (stage.step / Math.max(1, stage.steps)) * 100 : 0}%` },
-              ]}
-            />
-          </View>
-        </View>
-        <Pressable
-          onPress={onClose}
-          style={[styles.done, closeLabel === 'Keep' && styles.doneKeep]}
-          accessibilityRole="button"
-          accessibilityLabel={
-            closeLabel === 'Keep'
-              ? 'Keep these moves and close the step'
-              : 'Undo these moves and close the step'
-          }
-        >
-          <Text style={[styles.doneText, closeLabel === 'Keep' && styles.doneTextKeep]}>
-            {closeLabel}
-          </Text>
-        </Pressable>
-      </View>
       <View style={styles.bar}>
         <Pressable
           onPress={onRestart}
@@ -127,32 +98,39 @@ export function StepBar({
           <Text style={styles.iconText}>{'›'}</Text>
         </Pressable>
 
-        {/* A visible three-way control. The popover it replaces did not dismiss
-            on an outside tap, and the tap that failed to dismiss it deselected
-            the user's piece. */}
-        <View style={styles.speed} accessibilityRole="radiogroup">
-          {SPEEDS.map((s) => {
-            const on = s.ms === speedMs;
-            return (
-              <Pressable
-                key={s.label}
-                onPress={() => onSpeed(s.ms)}
-                style={[styles.speedItem, on && styles.speedItemOn]}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: on }}
-                aria-checked={on}
-                accessibilityLabel={`${s.label} playback`}
-              >
-                <Text
-                  style={[styles.speedText, on && styles.speedTextOn]}
-                  maxFontSizeMultiplier={1.3}
-                >
-                  {s.short}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        {/* One control, not three. Three radio buttons were 132pt of a 393pt
+            bar spent on a preference, next to four transport buttons that are
+            what the bar is for; this cycles Slow -> Steady -> Brisk and says
+            which one it is on. */}
+        <Pressable
+          onPress={() => onSpeed(SPEEDS[(speedIndex(speedMs) + 1) % SPEEDS.length].ms)}
+          style={styles.speed}
+          accessibilityRole="button"
+          accessibilityLabel={`${speed.label} playback`}
+          accessibilityHint="Tap for the next speed"
+        >
+          <Text style={styles.speedText} maxFontSizeMultiplier={1.3}>
+            {speed.short}
+          </Text>
+        </Pressable>
+
+        {/* Was a row of its own above the transport, beside a stage rail that
+            repeated the group heading the step list prints two inches away.
+            The rail went; this moved down into the space it left. */}
+        <Pressable
+          onPress={onClose}
+          style={[styles.done, closeLabel === 'Keep' && styles.doneKeep]}
+          accessibilityRole="button"
+          accessibilityLabel={
+            closeLabel === 'Keep'
+              ? 'Keep these moves and close the step'
+              : 'Undo these moves and close the step'
+          }
+        >
+          <Text style={[styles.doneText, closeLabel === 'Keep' && styles.doneTextKeep]}>
+            {closeLabel}
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -167,23 +145,12 @@ const styles = StyleSheet.create({
     borderTopColor: line.hairline,
     paddingBottom: space.sm,
   },
-  head: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space.sm,
-    paddingHorizontal: space.gutter,
-    paddingTop: 4,
-  },
-  stage: { flex: 1, gap: 3 },
-  position: { ...type.overline, color: text.tertiary, textTransform: 'uppercase' },
-  stageTrack: { height: 2, borderRadius: 1, backgroundColor: line.hairline, overflow: 'hidden' },
-  stageFill: { height: 2, backgroundColor: accent.base },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: space.gutter,
-    paddingTop: 6,
+    paddingTop: space.sm,
   },
   icon: {
     minWidth: hit.min,
@@ -208,24 +175,19 @@ const styles = StyleSheet.create({
   playText: { color: text.primary },
 
   speed: {
-    flexDirection: 'row',
-    marginLeft: 'auto',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: line.outline,
-    overflow: 'hidden',
-  },
-  speedItem: {
     minWidth: hit.min,
     minHeight: hit.min,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: line.outline,
+    backgroundColor: surface.raised,
   },
-  speedItemOn: { backgroundColor: accent.soft },
-  speedText: { ...type.caption, fontWeight: '700', color: text.tertiary },
-  speedTextOn: { color: text.primary },
+  speedText: { ...type.caption, fontWeight: '700', color: text.secondary },
 
   done: {
+    marginLeft: 'auto',
     minHeight: hit.min,
     justifyContent: 'center',
     paddingHorizontal: space.md,

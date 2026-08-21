@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# agent worktrees and scratch
+.claude/worktrees/
+.probe/

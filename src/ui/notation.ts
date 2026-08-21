@@ -144,3 +144,79 @@ export function maskMoveRuns(text: string, mask = '\u2026'): string {
   flush();
   return out.join(' ');
 }
+
+/**
+ * ONE RENDERING OF ANY GIVEN MOVE SEQUENCE AT A TIME.
+ *
+ * Round 6, from the user, looking at their own phone: "here you show it twice".
+ * The move strip printed `Reverse sexy` over a boxed group of four chips, and
+ * the active step card ten points below printed the same four moves under the
+ * same label again. Both were correct; together they were noise.
+ *
+ * The rule this file now encodes is that during a run **the strip owns the
+ * notation**, because the strip is the thing with the playhead. Everything else
+ * on screen carries identity - the step's name, the algorithm's name - and
+ * never a second copy of the moves.
+ *
+ * The two functions below are what the components call, so
+ * `scripts/verify-notation.ts` checks the rule rather than a description of it.
+ */
+
+/** Anything that reads as a turn of the cube. Shared with `maskMoveRuns`. */
+export const isMoveToken = (word: string) => MOVE_TOKEN.test(word.replace(/[.,;:!?)\]]+$/, ''));
+
+/** True when a line of UI text prints turns rather than naming something. */
+export const printsMoves = (line: string) =>
+  line.split(/[\s\u00b7]+/).filter(Boolean).some(isMoveToken);
+
+/**
+ * The lines a step row prints in the list, in order.
+ *
+ * The running row prints its name and nothing else: the strip directly above it
+ * is showing every one of its moves with a playhead on the current one, and
+ * printing them again in a card was the duplication the user objected to.
+ */
+export function stepRowLines(opts: {
+  title: string;
+  algorithm?: string | null;
+  notation: string[];
+  running: boolean;
+}): string[] {
+  const { title, algorithm, running } = opts;
+  if (running) return [title];
+  // The NAME, and never the moves. A row used to print its notation summary as
+  // well - `U' · Sexy move ×3`, or raw letters for a short step - which is
+  // teaching material on a screen whose job is to say where you are. It lives
+  // in the explanation now; the row keeps the one name that is not already in
+  // its own title.
+  //
+  // Suppressed only when it repeats the row's own title. `tagFor`'s other rule
+  // - drop the name when a chunk inside the printed notation already carries it
+  // - existed to stop `Sexy move · Sexy move · L U L' U'` on one card. There is
+  // no notation on the card any more, and that rule was taking the name off the
+  // very rows whose name is now the way in to the explanation.
+  // Without its face qualifier: `Edge 3-cycle (anticlockwise)` truncates to
+  // `Edge 3-cycle (anticlo...` in the width a list row can spare, which is the
+  // qualifier costing eleven characters and delivering none. The full name is
+  // in the button's accessibility label and at the top of the explanation.
+  const name = algorithm ? baseName(algorithm) : null;
+  if (!name) return [title];
+  return name === baseName(title) ? [title] : [title, name];
+}
+
+/**
+ * What the strip's heading says while the playhead sits on move `i`.
+ *
+ * The chunk's name, because that is the thing being performed *right now* -
+ * "the four moves I am doing are the one called Reverse sexy" - and it changes
+ * as the playhead crosses into the next trigger. A stretch of moves that is not
+ * a named trigger falls back to the step's own title, so the heading is never
+ * empty and never lies about what is happening.
+ */
+export function stripHeading(notation: string[], i: number, title: string): string {
+  const at = Math.max(0, Math.min(i, notation.length - 1));
+  for (const b of notationBlocks(notation)) {
+    if (at >= b.start && at < b.start + b.all.length) return b.label ?? title;
+  }
+  return title;
+}

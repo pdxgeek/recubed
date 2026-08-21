@@ -532,7 +532,12 @@ try {
     const strip = page.locator('[aria-label*="Move "][aria-label*=" of "]').first();
     const scrollLeft = () => strip.evaluate((n) => n.scrollLeft);
     const width = await strip.evaluate((n) => ({ view: n.clientWidth, content: n.scrollWidth }));
-    await page.click('[aria-label="Brisk playback"]').catch(() => {});
+    // One cycling button, not three radios: tap it until it says Brisk.
+    for (let i = 0; i < 3; i++) {
+      if (await page.locator('[aria-label="Brisk playback"]').count()) break;
+      await page.click('[aria-label$=" playback"]').catch(() => {});
+      await sleep(150);
+    }
     await sleep(400);
     // Far enough in that a strip which is not following has certainly lost it.
     const presses = Math.max(8, Math.min(most - 2, 16));
@@ -573,10 +578,18 @@ try {
     const rows = page.locator('[role="button"][aria-label*=" moves"]');
     const nRows = await rows.count();
     const nWhy = await page.locator('[role="button"][aria-label^="Why "]').count();
+    // Round 6: the `?` circle on every row became the algorithm's NAME on the
+    // rows that have one - "we just show the name, and if they click the name
+    // we can open the teaching page". A cross or setup step has no algorithm
+    // and nothing to teach, so it gets no button; the running step's doorway is
+    // the strip's heading, which 7b.3b checks.
+    const rowLabels = await rows.evaluateAll((ns) => ns.map((n) => n.getAttribute('aria-label') ?? ''));
+    const teaches = (l) => / moves, /.test(l);
+    const nAlg = rowLabels.filter(teaches).length;
     check(
-      'every step row offers its explanation, not only the running one',
-      nRows > 0 && nWhy === nRows,
-      `${nWhy} explanations for ${nRows} rows`
+      'every step that teaches an algorithm offers its explanation',
+      nRows > 0 && nAlg > 0 && nWhy === nAlg,
+      `${nWhy} explanations for ${nAlg} of ${nRows} rows`
     );
 
     // The invariant, stated once and enforced everywhere below.
@@ -629,12 +642,20 @@ try {
     );
 
     // 7b.1 the explanation opens from a row that is not running.
+    //
+    // The explanation buttons are a SUBSET of the rows now, so an index into
+    // one is not an index into the other. This maps a row to its own button.
+    const whyOf = (rowIndex) =>
+      page
+        .locator('[role="button"][aria-label^="Why "]')
+        .nth(labels.slice(0, rowIndex).filter(teaches).length);
     let longest = 0;
     let most = 0;
     const labels = await rows.evaluateAll((ns) => ns.map((n) => n.getAttribute('aria-label') ?? ''));
     labels.forEach((l, i) => {
       const m = Number((l.match(/(\d+) moves/) ?? [])[1] ?? 0);
-      if (m > most) {
+      // Only a step that names an algorithm has an explanation to open.
+      if (m > most && teaches(l)) {
         most = m;
         longest = i;
       }
@@ -657,7 +678,7 @@ try {
     });
     const probe = sexy >= 0 ? sexy : longest;
     const title = labels[probe].split(',')[0];
-    await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+    await whyOf(longest).click();
     await sleep(1000);
     const opened = await bodyText();
     check(
@@ -698,24 +719,27 @@ try {
       await sleep(1000);
       const whys = page.locator('[role="button"][aria-label^="Why "]');
       const n = await whys.count();
+      // Row indices that actually carry a button, in the buttons' own order.
+      const whyRows = labels.map((l, i) => (teaches(l) ? i : -1)).filter((i) => i >= 0);
       let clipped = 0;
       let silent = 0;
       let noFootnote = 0;
       let worst = '';
       for (let i = 0; i < n; i++) {
+        const row = whyRows[i] ?? 0;
         await whys.nth(i).click();
         await sleep(320);
         const fit = await sheetFit();
         if (!fit || fit.overflow > 0) {
           clipped++;
           if (!fit?.more) silent++;
-          if (!worst) worst = `${labels[i]} overflows by ${fit?.overflow}`;
+          if (!worst) worst = `${labels[row]} overflows by ${fit?.overflow}`;
         }
         // Only a step that names an algorithm has a library entry to count
         // pieces from; "Put white on the bottom" is a setup turn, not one.
-        if (/ moves, /.test(labels[i]) && !fit?.hasFootnote) {
+        if (teaches(labels[row]) && !fit?.hasFootnote) {
           noFootnote++;
-          if (!worst) worst = `${labels[i]} has no footnote`;
+          if (!worst) worst = `${labels[row]} has no footnote`;
         }
         await page.click('[aria-label="Back to the step list"]');
         await sleep(200);
@@ -731,7 +755,7 @@ try {
     ]) {
       await page.setViewportSize({ width: w, height: h });
       await sleep(900);
-      await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+      await whyOf(longest).click();
       await sleep(700);
       const fit = await sheetFit();
       check(
@@ -747,7 +771,7 @@ try {
 
     // 7b.2b the scrim is a real way out: the sheet takes the height it needs,
     // so there is cube above it to tap.
-    await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
+    await whyOf(longest).click();
     await sleep(800);
     await page.mouse.click(190, 100);
     await sleep(700);
