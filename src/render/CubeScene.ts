@@ -460,7 +460,7 @@ export class CubeScene {
     const { top, right, near, far, distance } = this.fit;
     this.proj.makePerspective(-right, right, top, -top, near, far);
     this.view.makeTranslation(0, 0, -distance);
-    this.viewport = viewportFor({ width: this.width, height: this.height }, this.layout);
+    this.viewport = viewportFor({ width: this.width, height: this.height });
     this.gl.viewport(0, 0, this.viewport.width, this.viewport.height);
   }
 

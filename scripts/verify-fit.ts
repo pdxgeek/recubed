@@ -27,8 +27,10 @@ import {
   fitCamera,
   fitFor,
   projectToNdc,
+  screenPoint,
   viewportFor,
 } from '../src/render/fit';
+import { panelBudget, runPanelHeight } from '../src/ui/layout';
 import { applySpin, restingOrientation } from '../src/render/view';
 import { CUBIES } from '../src/cube/core';
 
@@ -198,52 +200,133 @@ const ORIENTATIONS = orientations();
   console.log('ok    a degenerate or unmeasured surface still produces a usable camera');
 }
 
-// --- 4. the viewport never overruns the drawing buffer ---------------------
+// --- 4. THE CUBE IS INSIDE THE RECTANGLE THE USER IS LOOKING AT ------------
 //
-// The suspected cause of the device screenshot: `expo-gl` resizes its drawing
-// buffer in its own time, so for a frame or two after the canvas changes shape
-// the reported height is the old, taller one. A GL viewport taller than the
-// framebuffer does not scale the image down - it pushes the top of it off the
-// surface. Nothing here can prove that is what happened on the phone, but this
-// asserts the two properties the fix needs: it is a no-op when the two
-// measurements agree, and it never asks for more than the buffer has.
+// The property this file existed for, restated in the units that matter. Round
+// 5 asserted "every vertex is inside the frustum", which is true of a cube
+// drawn into the wrong quarter of the drawing buffer, and the cube was still
+// cut off on the phone afterwards. `screenPoint` follows the whole chain -
+// projection, GL viewport inside the buffer, buffer stretched into the view -
+// and lands in LAYOUT POINTS. A vertex inside 0..width by 0..height is a
+// vertex the user can see.
+//
+// Driven with the shapes the app really gives the GL view on the user's phone:
+// 393 points wide, and a height that is what is left of 852 after the safe
+// area, the top bar, the transport bar, the panel's share and the move strip.
 {
-  let bad = 0;
-  for (const s of SURFACES) {
-    for (const dpr of [1, 2, 3]) {
-      const buffer = { width: s.w * dpr, height: s.h * dpr };
-      const v = viewportFor(buffer, { width: s.w, height: s.h });
-      if (v.width !== buffer.width || v.height !== buffer.height) {
-        bad++;
-        console.log(`      ${s.name} @${dpr}: agreeing measurements changed the viewport`);
+  /** What the shell hands the GL view on a 393x852 phone, at the panel shares. */
+  const CANVASES: { name: string; w: number; h: number; dpr: number }[] = [];
+  for (const [name, body] of [
+    ['iPhone 15, iOS safe area, running', 631],
+    ['iPhone 15, no safe area, running', 724],
+    ['iPhone 15, at rest', 692],
+    ['iPhone SE, running', 480],
+    ['a very short landscape window', 300],
+  ] as [string, number][]) {
+    const wanted = runPanelHeight(body, 200);
+    const strip = name.includes('rest') ? 0 : 120;
+    const b = panelBudget(body, wanted, strip);
+    CANVASES.push({ name, w: 393, h: b.cube || b.canvas, dpr: 3 });
+  }
+
+  const worstFor = (
+    buffer: { width: number; height: number },
+    layout: { width: number; height: number },
+    viewport: { width: number; height: number }
+  ) => {
+    const fit = fitFor(buffer, layout);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const q of ORIENTATIONS) {
+      for (const v of VERTS) {
+        const p = v.clone().applyQuaternion(q);
+        const s = screenPoint(fit, buffer, layout, viewport, p.x, p.y, p.z);
+        minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x);
+        minY = Math.min(minY, s.y); maxY = Math.max(maxY, s.y);
       }
     }
-  }
-  if (bad) fail(`${bad} agreeing surfaces had their viewport altered`);
-  else console.log(`ok    when the buffer and the layout agree the whole buffer is used`);
+    return { minX, maxX, minY, maxY };
+  };
 
-  // A buffer that has not shrunk yet: the canvas lost 108pt to the move strip.
+  let bad = 0;
+  let tightest = 1;
+  for (const c of CANVASES) {
+    const layout = { width: c.w, height: c.h };
+    const buffer = { width: c.w * c.dpr, height: c.h * c.dpr };
+    const box = worstFor(buffer, layout, viewportFor(buffer));
+    const inside =
+      box.minX >= 0 && box.maxX <= c.w && box.minY >= 0 && box.maxY <= c.h;
+    if (!inside) {
+      bad++;
+      console.log(`      ${c.name} (${c.w}x${c.h}): cube box ${JSON.stringify(box)}`);
+    }
+    // How much of the axis the fit is CONSTRAINED by the cube uses. A cube that
+    // clears the frame by miles on both axes passes "inside" and teaches
+    // nobody anything; a wide canvas legitimately leaves air at the sides.
+    tightest = Math.min(
+      tightest,
+      Math.max((box.maxY - box.minY) / c.h, (box.maxX - box.minX) / c.w)
+    );
+  }
+  if (bad) fail(`${bad} of ${CANVASES.length} real canvases cut the cube off`);
+  else console.log(`ok    all ${CANVASES.length} canvases the shell can hand the GL view show the whole cube`);
+  if (tightest < 0.7) fail(`the cube uses only ${(tightest * 100).toFixed(0)}% of the axis it is fitted to`);
+  else console.log(`ok    and it fills at least ${(tightest * 100).toFixed(0)}% of the axis it is fitted to`);
+
+  // A DRAWING BUFFER THAT HAS NOT CAUGHT UP.
+  //
+  // The canvas just lost 120pt to the move strip; expo-gl has not resized yet,
+  // so it still reports the taller buffer. With the whole buffer as the
+  // viewport this is invisible on screen: the stretch that presents the buffer
+  // into the view undoes exactly the aspect difference the projection was built
+  // with. This is the case round 5's clamped viewport got wrong.
   {
-    const layout = { width: 393, height: 322 };
+    const layout = { width: 393, height: 274 };
     const stale = { width: 393 * 3, height: 430 * 3 };
-    const v = viewportFor(stale, layout);
-    if (v.height !== 322 * 3) fail(`a stale-tall buffer gave viewport height ${v.height}, wanted ${322 * 3}`);
-    else console.log('ok    a drawing buffer that has not caught up does not stretch the viewport past the surface');
+    const box = worstFor(stale, layout, viewportFor(stale));
+    const centreY = (box.minY + box.maxY) / 2;
+    const inside = box.minY >= 0 && box.maxY <= layout.height;
+    const centred = Math.abs(centreY - layout.height / 2) < 1;
+    if (!inside || !centred) {
+      fail(
+        `a stale buffer moved the cube: box ${JSON.stringify(box)} in a ${layout.height}pt view`
+      );
+    } else {
+      console.log('ok    a drawing buffer that has not caught up leaves the cube centred and whole');
+    }
+
+    // The same case through round 5's clamped viewport, to show what it cost.
+    const clamped = {
+      width: stale.width,
+      height: Math.min(stale.height, Math.round(layout.height * (stale.width / layout.width))),
+    };
+    const was = worstFor(stale, layout, clamped);
+    const wasCentre = (was.minY + was.maxY) / 2;
+    if (Math.abs(wasCentre - layout.height / 2) < 1) {
+      fail('the clamped viewport was harmless after all - this check no longer proves anything');
+    } else {
+      console.log(
+        `ok    and the clamped viewport it replaces put the centre at ${wasCentre.toFixed(0)}pt ` +
+        `of a ${layout.height}pt view`
+      );
+    }
   }
 
-  // And it can never ask for more than the buffer really has.
+  // The viewport is the buffer, rounded, and nothing else.
   {
-    const v = viewportFor({ width: 200, height: 100 }, { width: 393, height: 2000 });
-    if (v.height > 100) fail(`the viewport asked for ${v.height} rows of a 100-row buffer`);
-    else console.log('ok    the viewport is never taller than the buffer says it is');
+    let odd = 0;
+    for (const s of SURFACES) {
+      for (const dpr of [1, 2, 3]) {
+        const buffer = { width: s.w * dpr, height: s.h * dpr };
+        const v = viewportFor(buffer);
+        if (v.width !== buffer.width || v.height !== buffer.height) odd++;
+      }
+    }
+    if (odd) fail(`${odd} surfaces had their viewport altered`);
+    else console.log('ok    the viewport is the whole drawing buffer at every surface and ratio');
+    const v = viewportFor({ width: 0.4, height: -3 });
+    if (v.width < 1 || v.height < 1) fail(`a degenerate buffer gave viewport ${JSON.stringify(v)}`);
+    else console.log('ok    a degenerate buffer still yields a drawable viewport');
   }
-
-  // No layout, or a nonsense one, still yields the buffer untouched.
-  for (const l of [null, { width: 0, height: 0 }, { width: Number.NaN, height: 10 }]) {
-    const v = viewportFor({ width: 640, height: 480 }, l as never);
-    if (v.width !== 640 || v.height !== 480) fail(`a missing layout changed the viewport: ${JSON.stringify(v)}`);
-  }
-  console.log('ok    a missing or nonsense layout leaves the buffer alone');
 }
 
 // --- the radius really does contain the cube -------------------------------

@@ -77,7 +77,14 @@ import {
 import { chunkNameAt } from './src/ui/notation';
 import { TOP_BAR_H, netBlockHeight } from './src/ui/net';
 import { tokens } from './src/ui/theme';
-import { listBottomInset, panelOverflow, runPanelHeight } from './src/ui/layout';
+import {
+  RUN_PANEL_MIN,
+  STRIP_H_FALLBACK,
+  listBottomInset,
+  panelBudget,
+  panelOverflow,
+  runPanelHeight,
+} from './src/ui/layout';
 import {
   emptyLearnState,
   finishAttempt,
@@ -189,6 +196,12 @@ export default function App() {
   /** Which move that was: `playback.index` has moved on by the time they answer. */
   const revealed = useRef(0);
   const [paintNudge, setPaintNudge] = useState<string | null>(null);
+  /**
+   * The move strip's measured height, so the canvas reserves exactly the room
+   * the strip takes and the cube is fitted to what is left. It used to be a
+   * constant 108 measured in a browser.
+   */
+  const [stripH, setStripH] = useState(STRIP_H_FALLBACK);
 
   const [plan, setPlan] = useState<SolvePlan | null>(null);
   const [shortest, setShortest] = useState<PlanMethod | null>(null);
@@ -587,10 +600,28 @@ export default function App() {
    * clamp is what keeps a very tall or very short window sensible; the fallback
    * is only in play for the first frame.
    */
-  const runPanel = (() => {
-    const h = runPanelHeight(bodyBox.height, Math.min(200, sheetMin));
-    return { minHeight: h, maxHeight: h };
-  })();
+  /**
+   * The body's division between the cube and the panel, as definite numbers in
+   * every state.
+   *
+   * Not a percentage anywhere. `maxHeight: '56%'` resolves against a parent
+   * whose height Yoga settles differently on the two platforms, and the canvas
+   * was the only shrinkable thing in the column: if the percentage does not
+   * take, the panel sizes itself to a step list that wants to be a thousand
+   * points tall and the cube is what gives way. `panelBudget` puts a floor
+   * under the cube that the panel yields to instead.
+   */
+  const wantedPanel = playback
+    ? // A short screen gives the cube the height rather than the step list: at
+      // 667 the list is one row during a run, which is not worth 180pt of cube.
+      short
+      ? RUN_PANEL_MIN
+      : runPanelHeight(bodyBox.height, Math.min(200, sheetMin))
+    : flat
+      ? Math.max(200, Math.min(sheetMin, netRoom))
+      : sheetMin;
+  const budget = panelBudget(bodyBox.height, wantedPanel, playback ? stripH : 0);
+  const panelBox2 = { minHeight: budget.panel, maxHeight: budget.panel };
 
   const panel =
     mode === 'paint' ? (
@@ -658,7 +689,17 @@ export default function App() {
           setBodyBox((b) => (Math.abs(b.width - w) < 0.5 && Math.abs(b.height - h) < 0.5 ? b : { width: w, height: h }));
         }}
       >
-        <View style={[styles.canvasWrap, playback && styles.canvasWrapRunning]}>
+        <View
+          style={[
+            styles.canvasWrap,
+            // Room for the strip, measured rather than assumed, so the cube is
+            // fitted above it instead of drawn behind it. And a floor, so that
+            // whatever else in the column mis-measures itself, the canvas is
+            // never the thing squeezed to nothing.
+            playback && { paddingBottom: stripH },
+            budget.canvas > 0 && { minHeight: budget.canvas },
+          ]}
+        >
           {/* The GL surface stays mounted while the net is showing: unmounting
               it tears the scene down (as it must on a real unmount), and every
               toggle would then pay for a full rebuild. */}
@@ -707,6 +748,9 @@ export default function App() {
               // Tapping the name is how solving reaches teaching. The step is
               // already open, so this is the same sheet the list's own name
               // button opens - one destination, two doorways, no third surface.
+              onHeight={(h) =>
+                setStripH((prev) => (Math.abs(prev - h) < 0.5 ? prev : Math.round(h)))
+              }
               onExplain={() => {
                 setExplaining(playback.step);
                 setLearn((st) => watchedAlgorithm(st, playback.step.algorithmId));
@@ -737,22 +781,10 @@ export default function App() {
               ? [styles.panelSide, { width: Math.min(400, Math.max(300, width * 0.38)) }]
               : [
                   styles.panelBottom,
-                  playback
-                    ? short
-                      ? { minHeight: 140, maxHeight: 140 }
-                      : // A definite number, not a percentage of a parent whose
-                        // own height Yoga resolves differently on the two
-                        // platforms. Same 38% as before once the body has been
-                        // measured; the old percentage only while it has not.
-                        runPanel
-                    : flatPaint
-                      ? styles.panelCompact
-                      : flat
-                        ? {
-                            minHeight: Math.max(200, Math.min(sheetMin, netRoom)),
-                            maxHeight: Math.max(200, Math.min(sheetMin, netRoom)),
-                          }
-                        : { minHeight: sheetMin },
+                  // Definite numbers in every state. `panelBudget` has already
+                  // capped this at what the body can spare without taking the
+                  // cube below its floor.
+                  flatPaint ? styles.panelCompact : panelBox2,
                 ],
           ]}
         >
@@ -849,10 +881,6 @@ const styles = StyleSheet.create({
   // while hidden so nothing is drawn either way.
   hidden: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0 },
   canvasWrap: { flex: 1 },
-  // Room for the MoveStrip, so the cube is fitted above it rather than drawn
-  // behind it. Without this the strip's scrim hides the whole bottom layer -
-  // during playback, which is exactly when it matters.
-  canvasWrapRunning: { paddingBottom: 108 },
   overlay: { position: 'absolute', bottom: 14, left: 0, right: 0, alignItems: 'center' },
   overlayText: {
     ...tokens.type.caption,
@@ -892,7 +920,6 @@ const styles = StyleSheet.create({
   // The compact paint row measures itself; the panel must not stretch it.
   panelCompact: { flexGrow: 0, flexShrink: 0 },
   panelBottom: {
-    maxHeight: '56%',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: line.hairline,
   },

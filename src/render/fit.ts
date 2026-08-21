@@ -147,47 +147,76 @@ export interface Viewport {
 }
 
 /**
- * The rectangle of the drawing buffer to render into.
+ * THE VIEWPORT IS THE WHOLE DRAWING BUFFER. ALWAYS.
  *
- * Normally the whole of it, and on the web target always the whole of it. The
- * case this exists for is a native one: `expo-gl` resizes its drawing buffer in
- * its own time, so for a frame or two after the canvas changes shape -
- * `canvasWrapRunning` taking 108pt for the move strip is the app's own example
- * - `drawingBufferHeight` can still be the old, taller number. Setting the GL
- * viewport to a rectangle taller than the framebuffer does not scale the image
- * down; it pushes the top of it off the surface, which is a cube with its top
- * layer cut off.
+ * Round 5 made it something cleverer: the layout's shape scaled by the buffer's
+ * width, clamped to the buffer, on the theory that a buffer which had not caught
+ * up with a layout change was pushing the top of the cube off the surface. That
+ * theory is now known to be wrong - the cube was still clipped on the device
+ * afterwards - and the clamp is actively harmful, which is easy to show.
  *
- * So the buffer is trusted for the scale factor, which is stable, and the
- * layout for the shape, which is not: the viewport is the layout scaled by the
- * ratio the buffer's width implies, never larger than the buffer says it is.
- * When the two agree this returns the buffer unchanged, which is the only thing
- * that has ever been observed on web.
+ * expo-gl presents the WHOLE buffer stretched into the view's rectangle. So:
+ *
+ *   - Whole buffer, projection from the layout's shape: a stale buffer changes
+ *     nothing on screen. The image is drawn with the layout's aspect into a
+ *     buffer of some other aspect, and the stretch that presents it undoes
+ *     exactly that difference. The cube comes out centred, square and whole.
+ *   - Clamped viewport: the image is drawn into part of the buffer, and the
+ *     stretch that presents the whole buffer then moves and squashes it. A
+ *     1179x1500 buffer under a 393x235 layout put the cube's centre 180 points
+ *     down a 235-point view at half the size it should be.
+ *
+ * `verify-fit.ts` drives both through `screenPoint`, which is the whole chain,
+ * and asserts the property in the units the user is looking at: layout points.
  */
-export function viewportFor(
-  buffer: Viewport,
-  layout?: { width: number; height: number } | null
-): Viewport {
-  const bw = Math.max(1, Math.round(buffer.width));
-  const bh = Math.max(1, Math.round(buffer.height));
-  if (!layout || !(layout.width > 1) || !(layout.height > 1)) return { width: bw, height: bh };
-  const scale = bw / layout.width;
-  if (!Number.isFinite(scale) || scale <= 0) return { width: bw, height: bh };
+export function viewportFor(buffer: Viewport): Viewport {
   return {
-    width: bw,
-    height: Math.max(1, Math.min(bh, Math.round(layout.height * scale))),
+    width: Math.max(1, Math.round(buffer.width)),
+    height: Math.max(1, Math.round(buffer.height)),
   };
+}
+
+/**
+ * Where a vertex lands ON SCREEN, in the layout's own points, following every
+ * step the renderer and the platform actually take:
+ *
+ *   world -> the projection built from `fit` -> NDC
+ *         -> the GL viewport, inside the drawing buffer
+ *         -> the buffer, stretched into the layout's rectangle
+ *
+ * A point inside `0..layout.width` by `0..layout.height` is a point the user
+ * can see. That is the property "the cube is not cut off" actually means, and
+ * it is the one `verify-fit.ts` asserts - not "the NDC is inside the unit box",
+ * which is true of a cube drawn into the wrong quarter of the buffer.
+ */
+export function screenPoint(
+  fit: CameraFit,
+  buffer: { width: number; height: number },
+  layout: { width: number; height: number },
+  viewport: Viewport,
+  x: number,
+  y: number,
+  z: number
+): { x: number; y: number } {
+  const ndc = projectToNdc(fit, x, y, z);
+  const bw = Math.max(1, buffer.width);
+  const bh = Math.max(1, buffer.height);
+  // GL's origin is the bottom left of the buffer, and the viewport is placed
+  // there: this is where the clamped viewport's displacement comes from.
+  const px = (ndc.x * 0.5 + 0.5) * viewport.width;
+  const pyFromBottom = (ndc.y * 0.5 + 0.5) * viewport.height;
+  const pyFromTop = bh - pyFromBottom;
+  return { x: (px / bw) * layout.width, y: (pyFromTop / bh) * layout.height };
 }
 
 /**
  * Two measurements of the same surface, reconciled.
  *
  * The projection is built from the shape the *layout* reports, because that is
- * the rectangle the user is looking at; the GL viewport is set from the drawing
- * buffer, because that is the rectangle GL is writing into. When the two
- * disagree about the shape - which on a device they can, and on the web target
- * never do - the layout wins and `FIT_MARGIN` absorbs the difference. When
- * there is no layout yet, the buffer is all we have.
+ * the rectangle the user is looking at, and the buffer is presented stretched
+ * into exactly that rectangle - so the layout's aspect is the one that survives
+ * to the screen whatever shape the buffer happens to be. When there is no
+ * layout yet, the buffer is all we have.
  */
 export function fitFor(
   buffer: { width: number; height: number },

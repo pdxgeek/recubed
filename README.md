@@ -158,7 +158,14 @@ Nothing about the cube maths is taken on trust:
 - no step prints a turn against the turn before it (`L' L2` is `L`, `U' U` is
   nothing), and folding a sequence is proved never to change what it does;
 - the camera fit is driven with device-shaped surfaces at every device pixel
-  ratio, and every vertex the renderer draws has to land inside the frame;
+  ratio, and every vertex the renderer draws has to land inside the frame -
+  and then inside the **rectangle on screen**, in layout points, following the
+  whole chain from the projection through the GL viewport to the buffer being
+  stretched into the view. A drawing buffer that has not caught up with a
+  layout change has to leave the cube centred and whole;
+- the body's division between the cube and the panel is driven over every
+  height a window can have: the panel is a definite number in every state, and
+  the cube has a floor the panel yields to rather than the other way round;
 - and the learner model is checked to be honest: watching is not knowing, one
   clean run is not knowing, one miss undoes it, and an attempt with no answers
   in it changes nothing.

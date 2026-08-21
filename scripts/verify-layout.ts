@@ -8,11 +8,17 @@
  * that used to be a percentage is now a number with stated bounds.
  */
 import {
+  CUBE_MIN,
+  CUBE_MIN_SHARE,
   LIST_BREATHING_ROOM,
+  PANEL_LAST_RESORT,
   RUN_PANEL_MAX,
   RUN_PANEL_MIN,
   RUN_PANEL_SHARE,
+  STRIP_H_FALLBACK,
+  cubeFloor,
   listBottomInset,
+  panelBudget,
   panelOverflow,
   runPanelHeight,
 } from '../src/ui/layout';
@@ -87,6 +93,72 @@ const check = (name: string, ok: boolean, detail = '') => {
     const h = runPanelHeight(body, 200);
     check(`the cube keeps most of a ${body}pt body during a run`, h <= body * 0.5, `panel ${h}`);
   }
+}
+
+// -- THE CUBE'S FLOOR --------------------------------------------------------
+//
+// Round 6, from the user: "I dunno about zero panel height either the cube is
+// off the screen". Three rounds of controls were added on a "zero panel height"
+// argument measured in Chromium, and what actually decides the cube's size is
+// the panel's BOX - which was a percentage of a parent whose height Yoga
+// settles differently on the two platforms, with the canvas as the only
+// shrinkable sibling in the column. So the panel is a definite number, and it
+// yields to the cube rather than the other way round.
+//
+// Every body height between a short landscape window and a large tablet, at
+// every strip height the strip can measure itself at.
+{
+  let short = 0;
+  let overflow = 0;
+  let notDefinite = 0;
+  let cases = 0;
+  let worst = '';
+  for (let body = 260; body <= 1400; body += 4) {
+    for (const strip of [0, 96, STRIP_H_FALLBACK, 160]) {
+      cases++;
+      const wanted = runPanelHeight(body, 200);
+      const b = panelBudget(body, wanted, strip);
+      if (b.panel + b.canvas !== body) {
+        overflow++;
+        if (!worst) worst = `${body}/${strip}: ${b.panel} + ${b.canvas} != ${body}`;
+      }
+      if (!Number.isFinite(b.panel) || b.panel < 0) notDefinite++;
+      // The floor holds unless the panel has been squeezed to its own last
+      // resort, which only a window shorter than any phone can do.
+      const floor = Math.min(cubeFloor(body), body - strip);
+      if (b.cube < floor && b.panel > PANEL_LAST_RESORT) {
+        short++;
+        if (!worst) worst = `${body}pt body, ${strip}pt strip: ${b.cube}pt of cube, floor ${floor}`;
+      }
+    }
+  }
+  check(`the panel and the canvas always add up to the body (${cases} cases)`, overflow === 0, worst);
+  check('the panel is always a definite, non-negative number', notDefinite === 0);
+  check('the cube never falls below its floor while the panel has room to yield',
+    short === 0, worst);
+
+  // The specific numbers a 393x852 iPhone produces, with and without the safe
+  // area, so a change to the shares is visible in the diff rather than implied.
+  for (const [name, body, strip, minCube] of [
+    ['iPhone 15, iOS safe area, running', 631, 120, 240],
+    ['iPhone 15, no safe area, running', 724, 120, 300],
+    ['iPhone 15, at rest', 692, 0, 300],
+  ] as [string, number, number, number][]) {
+    const b = panelBudget(body, runPanelHeight(body, 200), strip);
+    check(`${name}: ${b.cube}pt of cube, ${b.panel}pt of panel`, b.cube >= minCube,
+      `wanted at least ${minCube}`);
+  }
+
+  // The panel wins only when honouring the floor would leave it with nothing.
+  {
+    const b = panelBudget(260, runPanelHeight(260, 200), 120);
+    check('a window too short for both keeps a usable panel',
+      b.panel === PANEL_LAST_RESORT && b.cube > 0, JSON.stringify(b));
+  }
+  check('an unmeasured body waits rather than guessing',
+    panelBudget(0, 210, 120).panel === 210);
+  check(`the floor is ${CUBE_MIN}pt or ${Math.round(CUBE_MIN_SHARE * 100)}% of the body, whichever is more`,
+    cubeFloor(300) === CUBE_MIN && cubeFloor(900) === 300);
 }
 
 console.log(`\n${fails ? `${fails} layout check(s) failed` : 'all layout checks passed'}`);

@@ -18,6 +18,15 @@ interface Props {
    * where you are; teaching happens when it is asked for.
    */
   onExplain: () => void;
+  /**
+   * The strip's own measured height.
+   *
+   * The shell used to reserve a constant 108pt for it - a browser measurement
+   * of a strip that is 117 in the same browser and unknown on a device, which
+   * is nine points of cube drawn under an opaque scrim. It reports what it
+   * actually is instead.
+   */
+  onHeight?: (h: number) => void;
   /** Practise mode: the moves ahead are covered and revealed one at a time. */
   practising: boolean;
   onPractise: (v: boolean) => void;
@@ -49,6 +58,7 @@ export function MoveStrip({
   moves,
   step,
   onExplain,
+  onHeight,
   practising,
   onPractise,
   onReveal,
@@ -117,7 +127,11 @@ export function MoveStrip({
     `${spoken(moves[Math.min(step, moves.length - 1)]?.notation ?? '')}`;
 
   return (
-    <View style={styles.wrap} pointerEvents="box-none">
+    <View
+      style={styles.wrap}
+      pointerEvents="box-none"
+      onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}
+    >
       <View style={styles.headerRow}>
         {/* The one place the algorithm is named during playback, so it carries
             the weight the step card's title used to. It changes as the playhead
