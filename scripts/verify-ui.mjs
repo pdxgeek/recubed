@@ -952,6 +952,74 @@ try {
       restarted.split('\n').filter((l) => /Done in|Reveal/.test(l)).join(' / ')
     );
 
+    // 7b.6 the learner model shows up where the learner already is.
+    //
+    // No new element and no new focus stop: the 4pt rail down the left edge of
+    // every row, which was already there and already invisible, and a word on
+    // the end of the row's own label. `unseen` says nothing - appending "not
+    // started" to eighteen of twenty rows would make the list unusable to
+    // listen to - so what is asserted is that practising something makes it
+    // say something, and that it says it on every row that teaches the same
+    // algorithm, not only the one that was practised.
+    {
+      const learnt = await page.evaluate(() =>
+        [...document.querySelectorAll('[role="button"]')]
+          .map((n) => n.getAttribute('aria-label') ?? '')
+          .filter((l) => / moves/.test(l))
+          .filter((l) => /, (learning|known this session)$/.test(l))
+      );
+      check(
+        'a practised algorithm is marked on the step list',
+        learnt.length >= 1,
+        JSON.stringify(learnt)
+      );
+      // The model is keyed on the algorithm's ID, so `Sexy move (back)` and
+      // `Sexy move` are one thing learned once. The rows that teach it should
+      // all light up, not only the one that was practised.
+      const base = (l) => (l.split(', ')[2] ?? '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const practisedBase = base(labels[probe]);
+      const sameAlgorithm = labels.filter((l) => base(l) === practisedBase && practisedBase);
+      const marked = new Set(learnt.map((l) => l.replace(/, (learning|known this session)$/, '')));
+      const missed = sameAlgorithm.filter((l) => !marked.has(l));
+      check(
+        `all ${sameAlgorithm.length} rows teaching "${practisedBase}" are marked, not just the one practised`,
+        practisedBase !== '' && sameAlgorithm.length >= 1 && missed.length === 0,
+        `${missed.length} unmarked: ${JSON.stringify(missed)}`
+      );
+      check(
+        'an attempt with misses in it is "learning", never "known"',
+        learnt.every((l) => l.endsWith(', learning')),
+        JSON.stringify(learnt)
+      );
+      const rail = await page.evaluate(() => {
+        const on = [...document.querySelectorAll('[role="button"]')].find((n) =>
+          /, learning$/.test(n.getAttribute('aria-label') ?? '')
+        );
+        const box = on?.parentElement;
+        const bar = box?.firstElementChild;
+        if (!bar) return null;
+        const r = bar.getBoundingClientRect();
+        const style = getComputedStyle(bar);
+        return { w: Math.round(r.width), h: Math.round(r.height), bg: style.backgroundColor };
+      });
+      check(
+        'the rail is 4pt wide and carries a colour for it',
+        !!rail && rail.w === 4 && rail.bg !== 'rgba(0, 0, 0, 0)',
+        JSON.stringify(rail)
+      );
+      check(
+        'and it is a part-height bar, not the full-height running one',
+        !!rail && rail.h > 0,
+        JSON.stringify(rail)
+      );
+      check(
+        'the model costs the list no extra focus stops',
+        (await page.evaluate(
+          () => document.querySelectorAll('[aria-label^="How well you know"]').length
+        )) === 0
+      );
+    }
+
     await page.click('[aria-label="Practise mode: hide the moves ahead"]');
     await sleep(600);
     await page.click('[aria-label^="Keep these moves"]');

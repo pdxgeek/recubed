@@ -79,6 +79,12 @@ import { chunkNameAt } from './src/ui/notation';
 import { TOP_BAR_H, netBlockHeight } from './src/ui/net';
 import { tokens } from './src/ui/theme';
 import { listBottomInset, panelOverflow, runPanelHeight } from './src/ui/layout';
+import {
+  emptyLearnState,
+  finishAttempt,
+  masteryOf,
+  watched as watchedAlgorithm,
+} from './src/learn/progress';
 
 /**
  * Whether the "drag to spin" nudge has already been shown. Module scope, so it
@@ -161,6 +167,24 @@ export default function App() {
    * work and wants a store this component should not invent.
    */
   const [practice, setPractice] = useState<PractiseSession | null>(null);
+  /**
+   * What the learner knows, across steps. THIS SESSION only - there is no
+   * store, and `src/learn/progress.ts` says why at length. Kept in a ref beside
+   * the state so the callbacks that fold attempts into it do not have to be
+   * rebuilt every time it changes.
+   */
+  const [learn, setLearn] = useState(emptyLearnState);
+  const practiceRef = useRef<PractiseSession | null>(null);
+  practiceRef.current = practice;
+  /** Folded in whenever an attempt ends: the step closes, or a new one starts. */
+  const bankAttempt = useCallback(() => {
+    const attempt = practiceRef.current;
+    if (attempt) setLearn((s) => finishAttempt(s, attempt));
+  }, []);
+  const masteryFor = useCallback(
+    (algorithmId: string | undefined) => masteryOf(learn, algorithmId),
+    [learn]
+  );
   /** A move has been revealed and the learner has not yet said how they did. */
   const [awaitingReport, setAwaitingReport] = useState(false);
   /** Which move that was: `playback.index` has moved on by the time they answer. */
@@ -387,10 +411,16 @@ export default function App() {
    * verdicts discarded rather than added to. Two attempts at one step are two
    * results, and averaging them would flatter the second one.
    */
-  const restartPractise = useCallback((p: Playback) => {
-    setPractice(startPractise(p.step.id, p.step.moves.length, p.step.algorithmId));
-    setAwaitingReport(false);
-  }, []);
+  const restartPractise = useCallback(
+    (p: Playback) => {
+      // The attempt being replaced is banked first: two attempts at one step
+      // are two results, and the second must not swallow the first.
+      bankAttempt();
+      setPractice(startPractise(p.step.id, p.step.moves.length, p.step.algorithmId));
+      setAwaitingReport(false);
+    },
+    [bankAttempt]
+  );
 
   const restoreBase = useCallback(() => {
     sceneRef.current?.cancelMove();
@@ -405,17 +435,19 @@ export default function App() {
     sceneRef.current?.cancelMove();
     setPlaying(false);
     setExplaining(null);
+    bankAttempt();
     setPractice(startPractise(st.id, st.moves.length, st.algorithmId));
     setAwaitingReport(false);
     // `selectStep` reads the origin out of the session when there is one, so a
     // second step picked mid-run is measured from the cube the plan describes -
     // not from wherever the first step left off, which stacked two preludes.
     setPlayback((p) => selectStep(p, p?.origin ?? planOrigin.current ?? state, st));
-  }, [state]);
+  }, [bankAttempt, state]);
 
   const closeRun = useCallback(() => {
     sceneRef.current?.cancelMove();
     setPlaying(false);
+    bankAttempt();
     setPractice(null);
     setAwaitingReport(false);
     setPlayback((p) => {
@@ -427,7 +459,7 @@ export default function App() {
       planOrigin.current = kept;
       return null;
     });
-  }, []);
+  }, [bankAttempt]);
 
   const stepForward = useCallback(() => {
     const scene = sceneRef.current;
@@ -497,11 +529,13 @@ export default function App() {
     (on: boolean) => {
       setPractising(on);
       setAwaitingReport(false);
+      // Turning practise off ends the attempt; turning it on starts a new one.
+      bankAttempt();
       if (on && playback) {
         setPractice(startPractise(playback.step.id, playback.step.moves.length, playback.step.algorithmId));
       }
     },
-    [playback]
+    [bankAttempt, playback]
   );
 
   const onModeChange = useCallback(
@@ -589,7 +623,13 @@ export default function App() {
         running={!!playback}
         practising={practising}
         onSelectStep={startStep}
-        onExplain={setExplaining}
+        onExplain={(st) => {
+          setExplaining(st);
+          // Opening the sheet is "seen", never "known": `watched` cannot
+          // promote anything past `learning`.
+          setLearn((s) => watchedAlgorithm(s, st.algorithmId));
+        }}
+        masteryOf={masteryFor}
         onGoPaint={(focus) => {
           if (focus) setPaintColor(focus);
           onModeChange('paint');

@@ -4,6 +4,7 @@ import { COLOR_IDS, COLOR_NAME, ColorId } from '../cube/core';
 import { PlanMethod, PlanStep, SolvePlan } from '../cube/solver/plan';
 import { HighlightMode, PiecePair } from '../cube/pieces';
 import { Notation } from './Notation';
+import { Mastery } from '../learn/progress';
 import { tagFor } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
@@ -28,6 +29,14 @@ interface Props {
    * to be on a device.
    */
   bottomInset?: number;
+  /**
+   * How well the learner knows each algorithm, this session.
+   *
+   * Shown on the rail that already runs down the left edge of every row - see
+   * `styles.rail`. A surface nobody opens teaches nobody, so the model appears
+   * where the learner already is rather than behind a tab.
+   */
+  masteryOf?: (algorithmId: string | undefined) => Mastery;
   onSelectStep: (step: PlanStep) => void;
   /** Opens the "why this works" sheet over the panel. */
   onExplain: (step: PlanStep) => void;
@@ -80,6 +89,7 @@ export function SolvePanel({
   stepForSelection,
   onClearSelection,
   bottomInset = 16,
+  masteryOf = () => 'unseen',
 }: Props) {
   const list = useRef<ScrollView>(null);
   const stepY = useRef<Record<string, number>>({});
@@ -283,6 +293,7 @@ export function SolvePanel({
               // Not shown when it would repeat the title or a chunk's name:
               // the card used to read "… 25 › Sexy move · Sexy move · L U L' U'".
               const tag = tagFor(step.title, step.algorithm, step.moves.map((m) => m.notation));
+              const learnt = masteryOf(step.algorithmId);
               return (
                 <View
                   key={step.id}
@@ -303,16 +314,32 @@ export function SolvePanel({
                       `space.sm` its own negative margin, so it lands where it
                       has always landed. */}
                   <View style={[styles.step, on && styles.stepOn]}>
-                    <View style={[styles.rail, on && styles.railOn]} />
+                    {/* The rail carries two things and never both at once:
+                        whether this step is running, and how well the learner
+                        knows its algorithm. Running wins, because it is about
+                        right now. Two channels, not one - LENGTH as well as
+                        hue - so it is not a colour-only signal. */}
+                    <View
+                      style={[
+                        styles.rail,
+                        !on && learnt === 'learning' && styles.railLearning,
+                        !on && learnt === 'known' && styles.railKnown,
+                        on && styles.railOn,
+                      ]}
+                    />
                     <Pressable
                       onPress={() => onSelectStep(step)}
                       style={styles.stepBody}
                       accessibilityRole="button"
                       accessibilityState={{ selected: on }}
                       aria-selected={on}
+                      // `unseen` says nothing. Silence is the right
+                      // announcement for "no information", and appending "not
+                      // started" to eighteen of twenty rows would make the list
+                      // unusable to listen to.
                       accessibilityLabel={`${step.title}, ${step.moves.length} moves${
                         step.algorithm ? `, ${step.algorithm}` : ''
-                      }`}
+                      }${learnt === 'known' ? ', known this session' : learnt === 'learning' ? ', learning' : ''}`}
                     >
                       <View style={styles.stepHead}>
                         {/* The marker carries "running"; the row keeps its name.
@@ -497,8 +524,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   stepOn: { borderColor: accent.base, backgroundColor: accent.soft },
-  rail: { width: 3, backgroundColor: 'transparent' },
+  // 4pt, not 3. Measured slack on the tightest step title at 375 is 18pt, so
+  // one point cannot truncate anything - and a 10pt dot in the head row, which
+  // is the obvious place to put a progress mark, would have landed exactly on
+  // that slack.
+  rail: { width: 4, backgroundColor: 'transparent' },
   railOn: { backgroundColor: accent.base },
+  railLearning: { height: '40%', backgroundColor: status.warn },
+  railKnown: { backgroundColor: status.ok },
   stepBody: { flex: 1, paddingVertical: space.md, paddingHorizontal: 14, gap: space.xs },
   stepHead: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stepTitle: { ...type.body, fontWeight: '600', color: text.secondary, flex: 1 },

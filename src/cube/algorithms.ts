@@ -241,6 +241,17 @@ export const ALGORITHMS: Algorithm[] = DEFS.map(build);
 
 export const ALGORITHMS_BY_ID = new Map(ALGORITHMS.map((a) => [a.id, a]));
 
+/**
+ * Name to id, for anything that only knows what a thing is called.
+ *
+ * `RecallEvent.chunk` is a trigger's NAME, because that is what the strip
+ * printed above the moves; the learner model is keyed on the id, because the
+ * sexy move is one thing you either know or do not however many faces you
+ * perform it on. `faceVariants` keeps the name constant across faces, so this
+ * join is exact and total.
+ */
+export const ALGORITHM_ID_BY_NAME = new Map(ALGORITHMS.map((a) => [a.name, a.id]));
+
 export interface SelectionMatch {
   algorithms: Algorithm[];
   /** True when every listed algorithm moves all the selected pieces. */
