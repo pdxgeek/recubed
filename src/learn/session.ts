@@ -58,9 +58,15 @@ export function startPractise(
 
 /**
  * Record one verdict. Immutable, like the rest of the app's state modules, and
- * idempotent per move: tapping `Knew it` and then `Missed it` on the same move
- * corrects the answer rather than counting twice, because a learner who taps
- * the wrong button has no other way back.
+ * idempotent per move: a second verdict on the same move corrects the first
+ * rather than counting twice.
+ *
+ * The route that reaches it is `‹ Previous move` and then `Reveal` again - the
+ * transport is deliberately not disabled while practising, and stepping back
+ * re-arms the report for the move you stepped back onto. The verdict buttons
+ * themselves vanish the moment either is tapped, so there is no in-place
+ * correction: this is what makes going back safe rather than double-counting,
+ * not a second chance at the same button.
  */
 export function record(
   session: PractiseSession,
@@ -117,6 +123,14 @@ export function byChunk(session: PractiseSession): Map<string, Tally> {
 export function summarise(session: PractiseSession | null, moves: number): string {
   const { knew, missed, answered } = tally(session);
   if (answered === 0) return `Done in ${moves} moves.`;
-  if (missed === 0) return `Done in ${moves} moves · ${knew} knew.`;
-  return `Done in ${moves} moves · ${knew} knew, ${missed} missed.`;
+  const score = missed === 0 ? `${knew} knew` : `${knew} knew, ${missed} missed`;
+  // Practise off and on again starts a fresh attempt while the step stays where
+  // it was, so an attempt can end with fewer answers than the step has moves.
+  // "21 moves · 5 knew" reads as a clean run of 21; it was five. The module
+  // will not invent the other sixteen, so it says how many there were.
+  const total = session?.total ?? answered;
+  if (answered < total) {
+    return `Done in ${moves} moves · answered ${answered} of ${total} · ${score}.`;
+  }
+  return `Done in ${moves} moves · ${score}.`;
 }

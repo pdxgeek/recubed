@@ -95,3 +95,52 @@ export function tagFor(
   if (names.includes(base)) return null;
   return algorithm;
 }
+
+/**
+ * Prose with its move sequences taken out, for practise mode.
+ *
+ * The "why this works" sheet is the one place a learner can go for help in the
+ * middle of a covered run, so taking it away would be the wrong fix. But its
+ * explanations quote the moves - "then repeat B U B' U' until it drops in" is
+ * the whole answer to a step that is `B U B' U'` five times over - and a
+ * feature whose premise is "you cannot spoil it" cannot print that.
+ *
+ * A run of two or more turns is a sequence and goes. A single turn stays: "F
+ * opens the top layer, and F' folds it back" is how the sentence explains the
+ * mechanism, one move on its own is not an answer to anything, and blanking
+ * them would leave the prose unreadable.
+ */
+const MOVE_TOKEN = /^[URFDLBMES]w?(?:2|')?$|^[xyz](?:2|')?$/;
+
+export function maskMoveRuns(text: string, mask = '\u2026'): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let run: string[] = [];
+  /** Trailing punctuation is part of the sentence, not part of the move. */
+  const split = (w: string) => {
+    const bare = w.replace(/[.,;:!?)\]]+$/, '');
+    return { bare, tail: w.slice(bare.length) };
+  };
+  const flush = () => {
+    if (run.length >= 2) out.push(mask);
+    else out.push(...run);
+    run = [];
+  };
+  for (const w of words) {
+    const { bare, tail } = split(w);
+    if (MOVE_TOKEN.test(bare)) {
+      run.push(bare);
+      if (tail) {
+        // A move that ends a clause ends the run with it.
+        const wasRun = run.length >= 2;
+        flush();
+        out[out.length - 1] = wasRun ? mask + tail : bare + tail;
+      }
+      continue;
+    }
+    flush();
+    out.push(w);
+  }
+  flush();
+  return out.join(' ');
+}

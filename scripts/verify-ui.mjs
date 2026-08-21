@@ -544,7 +544,19 @@ try {
     // For the tag check below, prefer a step whose algorithm is also a chunk
     // name - that is the shape the duplication bug lived in, and picking
     // "whichever step happened to be longest" made it a coin toss.
-    const sexy = labels.findIndex((l) => /, Sexy move/.test(l));
+    // The LONGEST such step, not the first: the practise-spoiler check below
+    // measures how much of the covered step comes back on screen, and a
+    // five-move step makes that a much weaker question than a twenty-move one.
+    let sexy = -1;
+    let sexyMoves = 0;
+    labels.forEach((l, i) => {
+      if (!/, Sexy move/.test(l)) return;
+      const m = Number((l.match(/(\d+) moves/) ?? [])[1] ?? 0);
+      if (m > sexyMoves) {
+        sexyMoves = m;
+        sexy = i;
+      }
+    });
     const probe = sexy >= 0 ? sexy : longest;
     const title = labels[probe].split(',')[0];
     await page.locator('[role="button"][aria-label^="Why "]').nth(longest).click();
@@ -690,6 +702,24 @@ try {
     check('running: nothing outside the net is under 44pt', (await census()).length === 0,
       JSON.stringify(await census()));
 
+    // The running step's own moves, read off the strip while they are still
+    // uncovered. Needed below to ask whether any of them come back on screen.
+    const stepMoves = await page.evaluate(() => {
+      const tokens = (n) =>
+        (n?.innerText ?? '').split(/\s+/).filter((w) => /^[URFDLBMESxyz]w?(?:2|')?$/.test(w));
+      // Climb out of the current chip until the strip is whole, stopping before
+      // the ancestor that also contains the step list.
+      let node = document.getElementById('move-current');
+      let best = [];
+      for (let i = 0; i < 8 && node; i++) {
+        if (node.querySelector?.('[aria-selected]')) break;
+        const t = tokens(node);
+        if (t.length > best.length) best = t;
+        node = node.parentElement;
+      }
+      return best;
+    });
+
     // 7b.4 practise mode cannot be spoiled by the transport.
     await page.click('[aria-label="Practise mode: hide the moves ahead"]');
     await sleep(900);
@@ -704,6 +734,75 @@ try {
       transport.every((t) => t.disabled === 'true'),
       JSON.stringify(transport)
     );
+
+    // 7b.4b practise mode cannot be spoiled by the "why this works" sheet.
+    //
+    // Round 4 closed Play and Next and opened this in the same commit: `?` went
+    // onto every row including the running one, and the sheet's first child was
+    // the step's whole move sequence, chunked and labelled. One tap printed it
+    // while the strip below still showed a row of `?`.
+    //
+    // Measured over the WHOLE SCREEN, and as a difference: how many four-move
+    // runs of the running step's own moves are readable before the sheet opens,
+    // and how many after. The list underneath does not change when the sheet
+    // opens, so the difference is the sheet's contribution and nothing else.
+    // None is allowed. The sheet keeps its explanation, its watch list and its
+    // piece count while practising; what it loses is the notation block and any
+    // run of turns inside the prose, which `maskMoveRuns` replaces with an
+    // ellipsis - "then repeat ... until it drops in".
+    {
+      check(
+        'the covered step has enough moves to make this measurable',
+        stepMoves.length >= 5,
+        `${stepMoves.length} moves read off the strip`
+      );
+      const runsOf = async () => {
+        const words = (await bodyText())
+          .split(/\s+/)
+          .map((w) => w.trim())
+          .filter(Boolean);
+        if (stepMoves.length < 4) return [];
+        const grams = new Set();
+        for (let i = 0; i + 4 <= stepMoves.length; i++) grams.add(stepMoves.slice(i, i + 4).join(' '));
+        const hits = [];
+        for (let i = 0; i + 4 <= words.length; i++) {
+          const g = words.slice(i, i + 4).join(' ');
+          if (grams.has(g)) hits.push(g);
+        }
+        return hits;
+      };
+      const before = await runsOf();
+      const whyLabel = await page.evaluate(() => {
+        const on = [...document.querySelectorAll('[aria-selected="true"]')].find((n) =>
+          / moves/.test(n.getAttribute('aria-label') ?? '')
+        );
+        const why = [...(on?.parentElement?.querySelectorAll('[aria-label^="Why "]') ?? [])][0];
+        return why?.getAttribute('aria-label') ?? null;
+      });
+      check('the running step still offers its explanation while practising', !!whyLabel, String(whyLabel));
+      if (whyLabel) {
+        await page.click(`[aria-label="${whyLabel}"]`);
+        await sleep(700);
+        const after = await runsOf();
+        const block = await page.evaluate(() => !!document.querySelector('#why-notation'));
+        check(
+          'practising: the sheet does not print the step it is covering',
+          !block,
+          'the notation block is on screen'
+        );
+        check(
+          `practising: opening the sheet adds no move sequence (${before.length} four-move runs before, ${after.length} after)`,
+          after.length <= before.length,
+          JSON.stringify(after)
+        );
+        check(
+          'and the strip is still covered underneath it',
+          /\?/.test(await bodyText())
+        );
+        await page.click('[aria-label="Back to the step list"]');
+        await sleep(500);
+      }
+    }
 
     // 7b.5 practise mode asks for an answer, and reports the one it was given.
     //

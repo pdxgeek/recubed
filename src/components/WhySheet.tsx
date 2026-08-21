@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PlanStep, noteForStep, piecesToWatch, stepFootnote } from '../cube/solver/plan';
 import { Notation } from './Notation';
+import { maskMoveRuns } from '../ui/notation';
 import { tokens } from '../ui/theme';
 
 /**
@@ -23,13 +24,36 @@ import { tokens } from '../ui/theme';
 
 interface Props {
   step: PlanStep;
+  /**
+   * True while the moves of this step are covered in the strip.
+   *
+   * Round 4 closed two ways of spoiling a practise run - Play and Next move -
+   * and opened a third in the same commit: `?` went onto every row including
+   * the running one, and this sheet's first child is the step's entire move
+   * sequence, chunked and labelled. One tap printed all 25 moves while the
+   * strip below still showed 25 `?` chips. The explanation, the watch list and
+   * the piece count all still work without it, so only the notation goes.
+   */
+  practising?: boolean;
   wireframe: boolean;
   onWireframe: (v: boolean) => void;
   onWatch: () => void;
   onClose: () => void;
 }
 
-export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Props) {
+export function WhySheet({
+  step,
+  practising = false,
+  wireframe,
+  onWireframe,
+  onWatch,
+  onClose,
+}: Props) {
+  // Practising covers the moves; the prose quotes them. "Then repeat B U B' U'
+  // until it drops in" is the whole answer to a step that is those four moves
+  // five times over, so a run of turns is masked while a single one - which
+  // explains a mechanism and answers nothing - is left alone.
+  const veil = (t: string) => (practising ? maskMoveRuns(t) : t);
   const note = useMemo(() => noteForStep(step), [step]);
   const watching = useMemo(() => piecesToWatch(step), [step]);
   // Counted from the step's own moves against the step's own cube, in
@@ -74,11 +98,23 @@ export function WhySheet({ step, wireframe, onWireframe, onWatch, onClose }: Pro
         onLayout={(e) => setViewport(e.nativeEvent.layout.height)}
         onContentSizeChange={(_w, h) => setContent(h)}
       >
-        <Notation moves={step.moves} variant="blocks" rawBelow={4} />
+        {practising ? (
+          <Text style={styles.covered}>
+            The moves stay covered while you are practising. Close this and tap Reveal when you
+            want the next one.
+          </Text>
+        ) : (
+          // A stable handle, like the strip's `move-current` and the row's
+          // `step-tag`: "is the answer on screen" is then measurable rather
+          // than inferred from a text dump.
+          <View nativeID="why-notation">
+            <Notation moves={step.moves} variant="blocks" rawBelow={4} />
+          </View>
+        )}
 
         <Text style={styles.overline}>What it does</Text>
-        {note && <Text style={styles.para}>{note}</Text>}
-        <Text style={styles.para}>{step.detail}</Text>
+        {note && <Text style={styles.para}>{veil(note)}</Text>}
+        <Text style={styles.para}>{veil(step.detail)}</Text>
 
         {watching.length > 0 && (
           <>
@@ -182,6 +218,7 @@ const styles = StyleSheet.create({
   moreText: { ...type.overline, color: accent.base },
   overline: { ...type.overline, color: text.tertiary, marginTop: space.sm },
   para: { ...type.caption, color: text.secondary },
+  covered: { ...type.caption, color: text.tertiary, fontStyle: 'italic' },
   watchRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   watchDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4, backgroundColor: cube.moving },
   watchText: { ...type.caption, color: text.secondary, flex: 1 },

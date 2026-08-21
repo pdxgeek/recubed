@@ -58,6 +58,37 @@ const check = (name: string, ok: boolean, extra = '') => {
   })();
   check('a clean run does not print "0 missed"', summarise(clean, 4) === 'Done in 4 moves · 4 knew.',
     summarise(clean, 4));
+
+  // Practise off and on again starts a fresh attempt while the step stays where
+  // it is, so the attempt can end with fewer answers than the step has moves.
+  // "Done in 21 moves · 5 knew" reads as a clean run of twenty-one; it was
+  // five. The summary may not invent the other sixteen, and may not hide them.
+  {
+    let part = startPractise('beginner-3', 21, 'trig-sexy');
+    part = record(part, 0, 'knew', 'Sexy move');
+    part = record(part, 1, 'knew', 'Sexy move');
+    part = record(part, 2, 'knew', 'Sexy move');
+    part = record(part, 3, 'knew', 'Sexy move');
+    part = record(part, 4, 'knew', 'Sexy move');
+    check(
+      'a partial attempt says how much of the step it covered',
+      summarise(part, 21) === 'Done in 21 moves · answered 5 of 21 · 5 knew.',
+      summarise(part, 21)
+    );
+    let partMissed = record(part, 5, 'missed', 'Sexy move');
+    check(
+      'and still reports the misses inside it',
+      summarise(partMissed, 21) === 'Done in 21 moves · answered 6 of 21 · 5 knew, 1 missed.',
+      summarise(partMissed, 21)
+    );
+    let whole = part;
+    for (let i = 5; i < 21; i++) whole = record(whole, i, 'knew', 'Sexy move');
+    check(
+      'a whole attempt does not carry the clause',
+      summarise(whole, 21) === 'Done in 21 moves · 21 knew.',
+      summarise(whole, 21)
+    );
+  }
 }
 
 // -- 3. a correction replaces, it does not double-count ----------------------

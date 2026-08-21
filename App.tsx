@@ -753,6 +753,10 @@ export default function App() {
             <View style={styles.sheetHolder} pointerEvents="box-none">
               <WhySheet
                 step={explaining}
+                // Only for the step actually being practised: the sheets of the
+                // other rows are not the thing being tested and printing their
+                // notation spoils nothing.
+                practising={practising && explaining.id === playback?.step.id}
                 wireframe={wireframe}
                 onWireframe={setWireframe}
                 onWatch={() => {

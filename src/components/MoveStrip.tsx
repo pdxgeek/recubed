@@ -138,6 +138,9 @@ export function MoveStrip({
       </View>
       <ScrollView
         ref={scroller}
+        // A stable handle on the strip itself, so a test can read the moves it
+        // is showing without guessing at the DOM around it.
+        nativeID="move-strip"
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.chips}
