@@ -147,32 +147,47 @@ export interface Viewport {
 }
 
 /**
- * THE VIEWPORT IS THE WHOLE DRAWING BUFFER. ALWAYS.
+ * THE VIEWPORT IS THE FRAMEBUFFER, AND THE FRAMEBUFFER IS `layout x dpr`.
  *
- * Round 5 made it something cleverer: the layout's shape scaled by the buffer's
- * width, clamped to the buffer, on the theory that a buffer which had not caught
- * up with a layout change was pushing the top of the cube off the surface. That
- * theory is now known to be wrong - the cube was still clipped on the device
- * afterwards - and the clamp is actively harmful, which is easy to show.
+ * `gl.drawingBufferWidth/Height` MUST NOT BE READ ON NATIVE. In expo-gl they
+ * are plain JS number properties, written once when the context is created and
+ * never again:
  *
- * expo-gl presents the WHOLE buffer stretched into the view's rectangle. So:
+ *   - `expo-gl/common/EXWebGLRenderer.cpp:57-58` sets them with
+ *     `gl.setProperty(...)`, not as getters, from `createWebGLRenderer`, which
+ *     runs once per context;
+ *   - the values come from a single `glGetIntegerv(GL_VIEWPORT)` in
+ *     `EXGLNativeContext.cpp:157-161`;
+ *   - meanwhile `expo-gl/ios/GLView.swift`'s `resizeViewBuffersToWidth`
+ *     REALLOCATES the colour, depth and MSAA renderbuffers on every layout
+ *     change, and never tells JS.
  *
- *   - Whole buffer, projection from the layout's shape: a stale buffer changes
- *     nothing on screen. The image is drawn with the layout's aspect into a
- *     buffer of some other aspect, and the stretch that presents it undoes
- *     exactly that difference. The cube comes out centred, square and whole.
- *   - Clamped viewport: the image is drawn into part of the buffer, and the
- *     stretch that presents the whole buffer then moves and squashes it. A
- *     1179x1500 buffer under a 393x235 layout put the cube's centre 180 points
- *     down a 235-point view at half the size it should be.
+ * So on a device those two numbers are the canvas's size at the moment the
+ * context was created, forever. Setting the viewport from them into a
+ * framebuffer that has since been reallocated SMALLER pushes the image off the
+ * TOP, because GL's origin is bottom left - and a cube cut off at the top of
+ * its own canvas is exactly the screenshot this project has now been sent
+ * twice. Nothing else in the pipeline has a top-specific signature: the
+ * projection cannot clip vertically at any aspect at all, because the vertical
+ * field of view is fixed at 40 degrees and a wrong aspect can only push the
+ * camera further back.
  *
- * `verify-fit.ts` drives both through `screenPoint`, which is the whole chain,
- * and asserts the property in the units the user is looking at: layout points.
+ * The framebuffer is the layer's own drawable, which is the view's size in
+ * points times the screen's pixel ratio. That is a number this app already
+ * knows honestly, from `onLayout` and `PixelRatio.get()`, and it is right on
+ * the web target too. So it is the only thing the viewport is ever set from.
+ *
+ * (The other correct answer is to not call `gl.viewport` at all on native and
+ * let `resizeViewBuffersToWidth`'s own `glViewport` stand. That is fewer moving
+ * parts but it is platform-specific, untestable from here, and it leaves the
+ * viewport wrong on web - so this app computes the same number instead, on both
+ * platforms, where a test can see it.)
  */
-export function viewportFor(buffer: Viewport): Viewport {
+export function viewportFor(layout: { width: number; height: number }, dpr: number): Viewport {
+  const r = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
   return {
-    width: Math.max(1, Math.round(buffer.width)),
-    height: Math.max(1, Math.round(buffer.height)),
+    width: Math.max(1, Math.round(layout.width * r)),
+    height: Math.max(1, Math.round(layout.height * r)),
   };
 }
 
@@ -181,8 +196,13 @@ export function viewportFor(buffer: Viewport): Viewport {
  * step the renderer and the platform actually take:
  *
  *   world -> the projection built from `fit` -> NDC
- *         -> the GL viewport, inside the drawing buffer
- *         -> the buffer, stretched into the layout's rectangle
+ *         -> the GL viewport, placed at the bottom left of the FRAMEBUFFER
+ *         -> the framebuffer, presented into the layout's rectangle
+ *
+ * `buffer` is the framebuffer that is really allocated - `layout x dpr` - and
+ * NOT whatever `gl.drawingBufferWidth/Height` claims, which on native is a
+ * number frozen at context creation. Passing the frozen one here is how a test
+ * models the bug rather than the fix.
  *
  * A point inside `0..layout.width` by `0..layout.height` is a point the user
  * can see. That is the property "the cube is not cut off" actually means, and

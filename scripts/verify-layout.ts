@@ -15,7 +15,9 @@ import {
   RUN_PANEL_MAX,
   RUN_PANEL_MIN,
   RUN_PANEL_SHARE,
+  INSETS,
   STRIP_H_FALLBACK,
+  canvasHeight,
   cubeFloor,
   listBottomInset,
   panelBudget,
@@ -159,6 +161,30 @@ const check = (name: string, ok: boolean, detail = '') => {
     panelBudget(0, 210, 120).panel === 210);
   check(`the floor is ${CUBE_MIN}pt or ${Math.round(CUBE_MIN_SHARE * 100)}% of the body, whichever is more`,
     cubeFloor(300) === CUBE_MIN && cubeFloor(900) === 300);
+}
+
+// -- A BROWSER MEASUREMENT MAY ONLY ENTER WEARING ITS OWN NAME ---------------
+//
+// The failure that has now cost three rounds: `verify-fit.ts` called 393x430 an
+// "iPhone 15 canvas" when 430 is what the same arithmetic gives with the
+// safe-area insets taken as ZERO - which is Chromium's answer, because
+// react-native-web resolves every `env(safe-area-inset-*)` to 0. The phone's
+// answer is 334. `canvasHeight` takes the insets as an argument so the two can
+// no longer be confused, and this pins the gap between them.
+{
+  const topBar = 67;
+  const panel = 358;
+  const phone = canvasHeight(852, INSETS.iphone, topBar, panel);
+  const browser = canvasHeight(852, INSETS.browser, topBar, panel);
+  check(`a 393x852 phone leaves ${phone}pt of canvas where Chromium leaves ${browser}pt`,
+    phone === 334 && browser === 427, `${phone} / ${browser}`);
+  check('which is exactly the 93pt of safe area the browser does not have',
+    browser - phone === INSETS.iphone.top + INSETS.iphone.bottom);
+  check('an iPhone SE has a status bar and no home indicator',
+    canvasHeight(667, INSETS.iphoneSE, topBar, panel) === 667 - 20 - topBar - panel);
+  check('the strip comes off the canvas too, and nothing goes negative',
+    canvasHeight(852, INSETS.iphone, topBar, panel, 120) === phone - 120 &&
+      canvasHeight(300, INSETS.iphone, topBar, panel) === 0);
 }
 
 console.log(`\n${fails ? `${fails} layout check(s) failed` : 'all layout checks passed'}`);

@@ -30,7 +30,17 @@ import {
   screenPoint,
   viewportFor,
 } from '../src/render/fit';
-import { panelBudget, runPanelHeight } from '../src/ui/layout';
+import {
+  INSETS,
+  STRIP_H_FALLBACK,
+  canvasHeight,
+  panelBudget,
+  runPanelHeight,
+} from '../src/ui/layout';
+import { TOP_BAR_H } from '../src/ui/net';
+
+/** The transport bar's height, measured off the running app in a browser. */
+const TRANSPORT_H = 61;
 import { applySpin, restingOrientation } from '../src/render/view';
 import { CUBIES } from '../src/cube/core';
 
@@ -38,6 +48,10 @@ let fails = 0;
 const fail = (msg: string) => {
   fails++;
   console.log(`FAIL  ${msg}`);
+};
+const check = (name: string, ok: boolean, detail = '') => {
+  if (ok) console.log(`ok    ${name}`);
+  else fail(`${name}${detail ? ` - ${detail}` : ''}`);
 };
 
 /** Every corner of every cubie body, plus the outermost point of every sticker. */
@@ -200,132 +214,217 @@ const ORIENTATIONS = orientations();
   console.log('ok    a degenerate or unmeasured surface still produces a usable camera');
 }
 
-// --- 4. THE CUBE IS INSIDE THE RECTANGLE THE USER IS LOOKING AT ------------
+// --- 4. THE DRAWING BUFFER IS A LIE ON NATIVE ------------------------------
 //
-// The property this file existed for, restated in the units that matter. Round
-// 5 asserted "every vertex is inside the frustum", which is true of a cube
-// drawn into the wrong quarter of the drawing buffer, and the cube was still
-// cut off on the phone afterwards. `screenPoint` follows the whole chain -
-// projection, GL viewport inside the buffer, buffer stretched into the view -
-// and lands in LAYOUT POINTS. A vertex inside 0..width by 0..height is a
-// vertex the user can see.
+// The input nothing in this project had modelled: THREE heights at once.
 //
-// Driven with the shapes the app really gives the GL view on the user's phone:
-// 393 points wide, and a height that is what is left of 852 after the safe
-// area, the top bar, the transport bar, the panel's share and the move strip.
+//   firstLayout  the canvas height when the GL context was created
+//   settled      the canvas height now
+//   frozen       what `gl.drawingBufferWidth/Height` report - FOREVER the first
+//                one, because expo-gl writes them as plain JS properties in
+//                `EXWebGLRenderer.cpp:57-58` from a single `glGetIntegerv` and
+//                never updates them
+//   framebuffer  what `GLView.swift`'s `resizeViewBuffersToWidth` has really
+//                allocated, which is the layer's drawable: settled x dpr
+//
+// A viewport taller than the framebuffer pushes the image off the TOP, because
+// GL's origin is bottom left. That is the only mechanism in the whole pipeline
+// with a top-specific signature, and it is the screenshot this project has been
+// sent twice.
+//
+// Note what this section does NOT do: it does not ask whether the NDC is inside
+// the unit box. Section 1 above asks that, and it is a restatement of
+// `fitCamera`'s own formula - it would print `ok` with the viewport set to
+// twice the framebuffer, which is the live bug. Everything here is in the
+// framebuffer's pixels and the layout's points.
 {
-  /** What the shell hands the GL view on a 393x852 phone, at the panel shares. */
-  const CANVASES: { name: string; w: number; h: number; dpr: number }[] = [];
-  for (const [name, body] of [
-    ['iPhone 15, iOS safe area, running', 631],
-    ['iPhone 15, no safe area, running', 724],
-    ['iPhone 15, at rest', 692],
-    ['iPhone SE, running', 480],
-    ['a very short landscape window', 300],
-  ] as [string, number][]) {
-    const wanted = runPanelHeight(body, 200);
-    const strip = name.includes('rest') ? 0 : 120;
-    const b = panelBudget(body, wanted, strip);
-    CANVASES.push({ name, w: 393, h: b.cube || b.canvas, dpr: 3 });
+  const HEIGHTS = [427, 334, 272, 240, 180];
+  const cases: { first: number; settled: number; dpr: number }[] = [];
+  for (const first of HEIGHTS) {
+    for (const settled of HEIGHTS) {
+      for (const dpr of [1, 2, 3]) cases.push({ first, settled, dpr });
+    }
   }
 
-  const worstFor = (
-    buffer: { width: number; height: number },
-    layout: { width: number; height: number },
-    viewport: { width: number; height: number }
-  ) => {
-    const fit = fitFor(buffer, layout);
+  let overrun = 0;
+  let underrun = 0;
+  let worstOverrun = '';
+  for (const c of cases) {
+    const layout = { width: 393, height: c.settled };
+    const framebuffer = { width: 393 * c.dpr, height: c.settled * c.dpr };
+    const viewport = viewportFor(layout, c.dpr);
+    if (viewport.height > framebuffer.height + 1 || viewport.width > framebuffer.width + 1) {
+      overrun++;
+      if (!worstOverrun) {
+        worstOverrun =
+          `first ${c.first}pt, settled ${c.settled}pt @${c.dpr}: viewport ${viewport.height} ` +
+          `rows into a ${framebuffer.height}-row framebuffer, ` +
+          `${((viewport.height - framebuffer.height) / c.dpr).toFixed(0)}pt off the top`;
+      }
+    }
+    if (Math.abs(viewport.height - framebuffer.height) > 1 || Math.abs(viewport.width - framebuffer.width) > 1) {
+      underrun++;
+    }
+  }
+  check(`the viewport never overruns the framebuffer (${cases.length} first/settled/dpr combinations)`,
+    overrun === 0, worstOverrun);
+  check('and never underruns it either: the viewport IS the framebuffer', underrun === 0);
+
+  // The bug itself, as an adversarial input: the viewport computed the way the
+  // pre-round-5 code computed it, from the frozen buffer.
+  {
+    const first = 427;
+    const settled = 334;
+    const dpr = 3;
+    const frozen = { width: 393 * dpr, height: first * dpr };
+    const framebuffer = { width: 393 * dpr, height: settled * dpr };
+    const lost = (frozen.height - framebuffer.height) / dpr;
+    check(
+      `the frozen buffer would have cut ${lost.toFixed(0)}pt off the top, which is why it is never read`,
+      frozen.height > framebuffer.height && lost > 50,
+      `${frozen.height} vs ${framebuffer.height}`
+    );
+  }
+
+  // A canvas that has not been measured yet: the fallback must still be usable.
+  {
+    const v = viewportFor({ width: 1, height: 1 }, 3);
+    check('an unmeasured canvas still yields a drawable viewport', v.width >= 1 && v.height >= 1);
+    const bad = viewportFor({ width: 393, height: 334 }, Number.NaN);
+    check('a nonsense pixel ratio falls back to 1 rather than to NaN',
+      bad.width === 393 && bad.height === 334, JSON.stringify(bad));
+  }
+}
+
+// --- 5. EVERY VERTEX IS INSIDE THE RECTANGLE ON SCREEN, IN POINTS ----------
+//
+// The property "the cube is not cut off" actually means, asserted in the units
+// the user is looking at, over canvases built from the shell's own arithmetic
+// rather than from literals. The failing edge is reported BY NAME, because
+// "12pt off the top" is the sentence that would have ended this in round 5.
+{
+  const SHAPES: { name: string; w: number; h: number; dpr: number }[] = [];
+  for (const [label, insets, dpr] of [
+    ['iPhone 15', INSETS.iphone, 3],
+    ['iPhone SE', INSETS.iphoneSE, 2],
+    ['Chromium through react-native-web', INSETS.browser, 1],
+  ] as [string, { top: number; bottom: number }, number][]) {
+    const windowH = label === 'iPhone SE' ? 667 : 852;
+    for (const running of [false, true]) {
+      const body = canvasHeight(windowH, insets, TOP_BAR_H, 0, running ? TRANSPORT_H : 0);
+      const wanted = running ? runPanelHeight(body, 200) : Math.min(360, Math.round(windowH * 0.42));
+      const b = panelBudget(body, wanted, running ? STRIP_H_FALLBACK : 0);
+      SHAPES.push({
+        name: `${label}, ${running ? 'running' : 'at rest'}`,
+        w: 393,
+        h: running ? b.cube : b.canvas,
+        dpr,
+      });
+    }
+  }
+
+  const EDGES = ['left', 'right', 'top', 'bottom'] as const;
+  let cut = 0;
+  let offCentre = 0;
+  let shrunk = 0;
+  let anamorphic = 0;
+  let worst = '';
+  let tightest = Infinity;
+  for (const shape of SHAPES) {
+    const layout = { width: shape.w, height: shape.h };
+    const framebuffer = { width: shape.w * shape.dpr, height: shape.h * shape.dpr };
+    const viewport = viewportFor(layout, shape.dpr);
+    const fit = fitFor(framebuffer, layout);
+    const clear = { left: Infinity, right: Infinity, top: Infinity, bottom: Infinity };
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const q of ORIENTATIONS) {
       for (const v of VERTS) {
         const p = v.clone().applyQuaternion(q);
-        const s = screenPoint(fit, buffer, layout, viewport, p.x, p.y, p.z);
+        const s = screenPoint(fit, framebuffer, layout, viewport, p.x, p.y, p.z);
+        clear.left = Math.min(clear.left, s.x);
+        clear.right = Math.min(clear.right, layout.width - s.x);
+        clear.top = Math.min(clear.top, s.y);
+        clear.bottom = Math.min(clear.bottom, layout.height - s.y);
         minX = Math.min(minX, s.x); maxX = Math.max(maxX, s.x);
         minY = Math.min(minY, s.y); maxY = Math.max(maxY, s.y);
       }
     }
-    return { minX, maxX, minY, maxY };
-  };
-
-  let bad = 0;
-  let tightest = 1;
-  for (const c of CANVASES) {
-    const layout = { width: c.w, height: c.h };
-    const buffer = { width: c.w * c.dpr, height: c.h * c.dpr };
-    const box = worstFor(buffer, layout, viewportFor(buffer));
-    const inside =
-      box.minX >= 0 && box.maxX <= c.w && box.minY >= 0 && box.maxY <= c.h;
-    if (!inside) {
-      bad++;
-      console.log(`      ${c.name} (${c.w}x${c.h}): cube box ${JSON.stringify(box)}`);
+    for (const e of EDGES) {
+      if (clear[e] < 0) {
+        cut++;
+        if (!worst) worst = `${shape.name}: ${(-clear[e]).toFixed(0)}pt off the ${e}`;
+      }
+      tightest = Math.min(tightest, clear[e]);
     }
-    // How much of the axis the fit is CONSTRAINED by the cube uses. A cube that
-    // clears the frame by miles on both axes passes "inside" and teaches
-    // nobody anything; a wide canvas legitimately leaves air at the sides.
-    tightest = Math.min(
-      tightest,
-      Math.max((box.maxY - box.minY) / c.h, (box.maxX - box.minX) / c.w)
-    );
-  }
-  if (bad) fail(`${bad} of ${CANVASES.length} real canvases cut the cube off`);
-  else console.log(`ok    all ${CANVASES.length} canvases the shell can hand the GL view show the whole cube`);
-  if (tightest < 0.7) fail(`the cube uses only ${(tightest * 100).toFixed(0)}% of the axis it is fitted to`);
-  else console.log(`ok    and it fills at least ${(tightest * 100).toFixed(0)}% of the axis it is fitted to`);
-
-  // A DRAWING BUFFER THAT HAS NOT CAUGHT UP.
-  //
-  // The canvas just lost 120pt to the move strip; expo-gl has not resized yet,
-  // so it still reports the taller buffer. With the whole buffer as the
-  // viewport this is invisible on screen: the stretch that presents the buffer
-  // into the view undoes exactly the aspect difference the projection was built
-  // with. This is the case round 5's clamped viewport got wrong.
-  {
-    const layout = { width: 393, height: 274 };
-    const stale = { width: 393 * 3, height: 430 * 3 };
-    const box = worstFor(stale, layout, viewportFor(stale));
-    const centreY = (box.minY + box.maxY) / 2;
-    const inside = box.minY >= 0 && box.maxY <= layout.height;
-    const centred = Math.abs(centreY - layout.height / 2) < 1;
-    if (!inside || !centred) {
-      fail(
-        `a stale buffer moved the cube: box ${JSON.stringify(box)} in a ${layout.height}pt view`
-      );
-    } else {
-      console.log('ok    a drawing buffer that has not caught up leaves the cube centred and whole');
-    }
-
-    // The same case through round 5's clamped viewport, to show what it cost.
-    const clamped = {
-      width: stale.width,
-      height: Math.min(stale.height, Math.round(layout.height * (stale.width / layout.width))),
-    };
-    const was = worstFor(stale, layout, clamped);
-    const wasCentre = (was.minY + was.maxY) / 2;
-    if (Math.abs(wasCentre - layout.height / 2) < 1) {
-      fail('the clamped viewport was harmless after all - this check no longer proves anything');
-    } else {
-      console.log(
-        `ok    and the clamped viewport it replaces put the centre at ${wasCentre.toFixed(0)}pt ` +
-        `of a ${layout.height}pt view`
-      );
-    }
-  }
-
-  // The viewport is the buffer, rounded, and nothing else.
-  {
-    let odd = 0;
-    for (const s of SURFACES) {
-      for (const dpr of [1, 2, 3]) {
-        const buffer = { width: s.w * dpr, height: s.h * dpr };
-        const v = viewportFor(buffer);
-        if (v.width !== buffer.width || v.height !== buffer.height) odd++;
+    const centre = screenPoint(fit, framebuffer, layout, viewport, 0, 0, 0);
+    if (Math.abs(centre.x - layout.width / 2) > 1 || Math.abs(centre.y - layout.height / 2) > 1) {
+      offCentre++;
+      if (!worst) {
+        worst = `${shape.name}: centre at ${centre.y.toFixed(0)}pt of a ${layout.height}pt view`;
       }
     }
-    if (odd) fail(`${odd} surfaces had their viewport altered`);
-    else console.log('ok    the viewport is the whole drawing buffer at every surface and ratio');
-    const v = viewportFor({ width: 0.4, height: -3 });
-    if (v.width < 1 || v.height < 1) fail(`a degenerate buffer gave viewport ${JSON.stringify(v)}`);
-    else console.log('ok    a degenerate buffer still yields a drawable viewport');
+    // A cube drawn at a quarter size passes every containment check there is.
+    const across = Math.max(maxX - minX, maxY - minY);
+    if (across < 0.6 * Math.min(layout.width, layout.height)) {
+      shrunk++;
+      if (!worst) worst = `${shape.name}: the cube is only ${across.toFixed(0)}pt across`;
+    }
+    // An aspect mismatch between the projection and the presented surface shows
+    // up as a stretch, which no NDC assertion can see. Measured on the unit
+    // vectors themselves rather than on the cube's silhouette: how many points
+    // one cube unit is worth across, against how many it is worth down.
+    const o = screenPoint(fit, framebuffer, layout, viewport, 0, 0, 0);
+    const ax = screenPoint(fit, framebuffer, layout, viewport, 1, 0, 0);
+    const ay = screenPoint(fit, framebuffer, layout, viewport, 0, 1, 0);
+    const ratio = Math.abs(ax.x - o.x) / Math.abs(ay.y - o.y);
+    if (ratio < 0.99 || ratio > 1.01) {
+      anamorphic++;
+      if (!worst) {
+        worst = `${shape.name}: one cube unit is ${Math.abs(ax.x - o.x).toFixed(2)}pt across and ` +
+          `${Math.abs(ay.y - o.y).toFixed(2)}pt down`;
+      }
+    }
+  }
+  check(`the whole cube is on screen at all ${SHAPES.length} real canvas shapes`, cut === 0, worst);
+  check(`and ${tightest.toFixed(0)}pt of clearance is left at the tightest edge`, tightest >= 4, worst);
+  check('the cube is centred in the canvas at every shape', offCentre === 0, worst);
+  check('the cube is not drawn at a fraction of the size it should be', shrunk === 0, worst);
+  check('and it is not stretched: a cube unit is the same number of points across as down',
+    anamorphic === 0, worst);
+  for (const s of SHAPES) console.log(`      ${s.name}: ${s.w}x${s.h}pt @${s.dpr}`);
+
+  // THE BUG, DRIVEN THROUGH THE SAME INSTRUMENT.
+  //
+  // Everything above is the fix. This is the pre-round-5 code: the viewport set
+  // from `gl.drawingBufferWidth/Height`, which on native is the canvas's size
+  // at context creation and never changes. The canvas was 427pt tall then (the
+  // first layout pass, before the safe-area insets land) and is 334pt now, so
+  // the viewport is 279 rows taller than the framebuffer - and GL's origin is
+  // the BOTTOM left, so all of that comes off the top.
+  //
+  // If this ever stops cutting the top off, the mechanism has changed and the
+  // section above has stopped proving anything.
+  {
+    const dpr = 3;
+    const layout = { width: 393, height: 334 };
+    const framebuffer = { width: 393 * dpr, height: 334 * dpr };
+    const frozen = { width: 393 * dpr, height: 427 * dpr };
+    const fit = fitFor(framebuffer, layout);
+    let top = Infinity;
+    let bottom = Infinity;
+    for (const q of ORIENTATIONS) {
+      for (const v of VERTS) {
+        const p = v.clone().applyQuaternion(q);
+        const s = screenPoint(fit, framebuffer, layout, frozen, p.x, p.y, p.z);
+        top = Math.min(top, s.y);
+        bottom = Math.min(bottom, layout.height - s.y);
+      }
+    }
+    check(
+      `the frozen-buffer viewport cuts ${(-top).toFixed(0)}pt off the TOP and nothing off the bottom`,
+      top < -1 && bottom > 0,
+      `top ${top.toFixed(1)} bottom ${bottom.toFixed(1)}`
+    );
   }
 }
 

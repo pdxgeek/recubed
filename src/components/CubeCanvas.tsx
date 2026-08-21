@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { LayoutChangeEvent, PanResponder, StyleSheet, View, ViewStyle } from 'react-native';
+import { LayoutChangeEvent, PanResponder, PixelRatio, StyleSheet, View, ViewStyle } from 'react-native';
 import { GLView, ExpoWebGLRenderingContext } from 'expo-gl';
 import { CubeScene, SCENE_BUILD } from '../render/CubeScene';
 import { RenderLoop, createRenderLoop } from '../render/loop';
@@ -63,7 +63,7 @@ export function CubeCanvas({
       // The layout is usually measured before the context exists; hand it over
       // as soon as there is a scene to take it, so the very first frame is
       // fitted to the rectangle on screen rather than to the buffer's shape.
-      scene.setLayoutSize(layout.current.width, layout.current.height);
+      scene.setLayoutSize(layout.current.width, layout.current.height, PixelRatio.get());
       // Everything about the frame - re-fitting a resized surface, capping the
       // delta, tearing down exactly once - lives in `render/loop.ts`, where it
       // can be driven by a fake clock in `verify-render.ts`.
@@ -92,12 +92,15 @@ export function CubeCanvas({
   const onLayout = useCallback((e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
     layout.current = { width: Math.max(1, width), height: Math.max(1, height) };
-    // Two measurements of one surface: the layout's shape, in points, is what
-    // the projection is built from, and the drawing buffer's pixels are what
-    // the viewport is set from. Both are handed over here rather than only the
-    // buffer, because on a device the two can disagree - which is what a cube
-    // clipped by the top of its own canvas looks like.
-    sceneRef.current?.setLayoutSize(layout.current.width, layout.current.height);
+    // The pixel ratio goes with the size: the framebuffer expo-gl really
+    // allocates is the layer's drawable, which is exactly this in pixels. What
+    // `gl.drawingBufferWidth/Height` report on native is frozen at context
+    // creation and must never be used for the viewport - see `render/fit.ts`.
+    sceneRef.current?.setLayoutSize(
+      layout.current.width,
+      layout.current.height,
+      PixelRatio.get()
+    );
     loopRef.current?.syncSize();
   }, []);
 

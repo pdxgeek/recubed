@@ -22,6 +22,7 @@ import {
   fitFor,
   viewportFor,
 } from './fit';
+import { FIT_DEBUG, FRAME_MARKERS } from './debug';
 import {
   PITCH_PER_PIXEL,
   YAW_PER_PIXEL,
@@ -241,6 +242,14 @@ export class CubeScene {
    * what a projection built for the wrong shape looks like.
    */
   private layout: { width: number; height: number } | null = null;
+  /**
+   * The screen's pixel ratio, handed in by the canvas because this file must
+   * stay free of react-native (`verify-render.ts` constructs a scene directly).
+   * It is what turns the layout's points into the framebuffer's pixels, and it
+   * is the ONLY way the viewport is ever computed - see `fit.ts` on why
+   * `gl.drawingBufferWidth/Height` cannot be trusted on a device.
+   */
+  private dpr = 1;
   private fit: CameraFit = fitCamera(1, 1);
   private viewport: Viewport = { width: 1, height: 1 };
 
@@ -441,12 +450,19 @@ export class CubeScene {
    * Tell the scene the shape of the view in layout units. Re-fits when the
    * shape really changed, so this is safe to call from every `onLayout`.
    */
-  setLayoutSize(width: number, height: number): boolean {
+  setLayoutSize(width: number, height: number, dpr = this.dpr): boolean {
     const w = Math.max(1, width);
     const h = Math.max(1, height);
-    if (this.layout && Math.abs(this.layout.width - w) < 0.5 && Math.abs(this.layout.height - h) < 0.5) {
+    const r = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    if (
+      this.layout &&
+      Math.abs(this.layout.width - w) < 0.5 &&
+      Math.abs(this.layout.height - h) < 0.5 &&
+      this.dpr === r
+    ) {
       return false;
     }
+    this.dpr = r;
     this.layout = { width: w, height: h };
     this.resize(this.width, this.height);
     return true;
@@ -460,8 +476,32 @@ export class CubeScene {
     const { top, right, near, far, distance } = this.fit;
     this.proj.makePerspective(-right, right, top, -top, near, far);
     this.view.makeTranslation(0, 0, -distance);
-    this.viewport = viewportFor({ width: this.width, height: this.height });
+    // The framebuffer, from the layout and the pixel ratio - never from
+    // `gl.drawingBufferWidth/Height`, which on native is frozen at context
+    // creation while `GLView.swift` quietly reallocates the real one. Until
+    // there is a layout the reported buffer is all there is, and that first
+    // frame or two is the only time it is read.
+    this.viewport = this.layout
+      ? viewportFor(this.layout, this.dpr)
+      : { width: Math.max(1, Math.round(this.width)), height: Math.max(1, Math.round(this.height)) };
     this.gl.viewport(0, 0, this.viewport.width, this.viewport.height);
+    if (FIT_DEBUG) {
+      console.log(
+        '[fit]',
+        JSON.stringify({
+          layout: this.layout,
+          buffer: { w: this.width, h: this.height },
+          expected: this.layout && {
+            w: Math.round(this.layout.width * this.dpr),
+            h: Math.round(this.layout.height * this.dpr),
+          },
+          viewport: this.viewport,
+          dpr: this.dpr,
+          aspect: Number(this.fit.aspect.toFixed(3)),
+          dist: Number(this.fit.distance.toFixed(2)),
+        })
+      );
+    }
   }
 
   orbit(dx: number, dy: number) {
@@ -728,6 +768,38 @@ export class CubeScene {
         this.draw(this.scratchModel, s.color, 6, gl.TRIANGLES);
       }
     }
+
+    if (FRAME_MARKERS) this.drawFrameMarkers();
+  }
+
+  /**
+   * Four lines at the very edge of whatever rectangle GL is writing into.
+   *
+   * No projection, no view, no model: the quad is placed directly in normalised
+   * device coordinates, so it lands on the edge of the SURFACE rather than on
+   * the edge of the scene. `src/render/debug.ts` says how to read the result.
+   * Off in the shipped app.
+   */
+  private drawFrameMarkers() {
+    const gl = this.gl;
+    const id = new Matrix4();
+    gl.uniformMatrix4fv(this.loc.uProj!, false, id.elements);
+    gl.uniformMatrix4fv(this.loc.uView!, false, id.elements);
+    gl.disable(gl.DEPTH_TEST);
+    this.bind(this.quadBuffer);
+    const edge = 0.98;
+    const thick = 0.02;
+    const bars: [number, number, number, number][] = [
+      [0, edge, 2 * edge, thick], // top
+      [0, -edge, 2 * edge, thick], // bottom
+      [-edge, 0, thick, 2 * edge], // left
+      [edge, 0, thick, 2 * edge], // right
+    ];
+    for (const [x, y, w, h] of bars) {
+      this.scratchModel.makeTranslation(x, y, 0).multiply(new Matrix4().makeScale(w, h, 1));
+      this.draw(this.scratchModel, [1, 0.2, 0.8], 6, gl.TRIANGLES, 1);
+    }
+    gl.enable(gl.DEPTH_TEST);
   }
 
   dispose() {

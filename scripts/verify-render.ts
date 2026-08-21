@@ -219,6 +219,39 @@ check('the viewport follows the surface',
   gl.viewportRect[2] === 1024 && gl.viewportRect[3] === 700, JSON.stringify(gl.viewportRect));
 pickRoundTrip('after a landscape resize');
 
+// -- THE NATIVE CONTRACT: THE DRAWING BUFFER NEVER CHANGES ------------------
+//
+// On a device `gl.drawingBufferWidth/Height` are plain JS properties written
+// once when the context is created and never again (expo-gl,
+// `EXWebGLRenderer.cpp:57-58`), while `GLView.swift` quietly reallocates the
+// real framebuffer on every layout change. So `resizeIfNeeded`, which the frame
+// loop calls every frame, fires exactly once in the life of the app - and
+// everything the renderer does about size has to come from `setLayoutSize`
+// instead. This asserts that, by holding the buffer still and moving only the
+// layout, which is what a phone really does.
+{
+  const frozenW = gl.drawingBufferWidth;
+  const frozenH = gl.drawingBufferHeight;
+  const dpr = 3;
+  let changed = 0;
+  for (const [w, h] of [[393, 427], [393, 334], [393, 271]] as [number, number][]) {
+    scene.setLayoutSize(w, h, dpr);
+    frame();
+    if (gl.viewportRect[2] !== w * dpr || gl.viewportRect[3] !== h * dpr) changed++;
+    // The frame loop's own call, with the buffer that never moves.
+    if (scene.resizeIfNeeded(frozenW, frozenH) !== false) changed++;
+    if (gl.viewportRect[2] !== w * dpr || gl.viewportRect[3] !== h * dpr) changed++;
+  }
+  check(
+    'the viewport tracks the LAYOUT while the drawing buffer stays frozen, as it does on a device',
+    changed === 0,
+    JSON.stringify(gl.viewportRect)
+  );
+  check('and it is the layout in pixels, never the frozen buffer',
+    gl.viewportRect[3] === 271 * dpr && frozenH !== 271 * dpr,
+    `${gl.viewportRect[3]} vs frozen ${frozenH}`);
+}
+
 // -- 6. the frame driver ------------------------------------------------------
 //
 // Both of these are bugs that have already happened once: a surface that

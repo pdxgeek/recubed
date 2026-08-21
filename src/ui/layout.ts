@@ -71,6 +71,37 @@ export const CUBE_MIN_SHARE = 1 / 3;
  */
 export const STRIP_H_FALLBACK = 120;
 
+/**
+ * How much canvas is left, from the window down.
+ *
+ * Here rather than as a literal in a test, because that is how three rounds of
+ * browser numbers got into the suite wearing a device's name: `verify-fit.ts`
+ * called `393x430` an "iPhone 15 canvas" when 430 is 852 minus the top bar and
+ * the panel with the safe-area insets taken as ZERO, which is Chromium's
+ * answer, not a phone's. On the phone the same chain gives 334. A browser
+ * measurement can still enter the suite - it just has to enter it wearing its
+ * own name, as `insets: {top: 0, bottom: 0}`.
+ */
+export function canvasHeight(
+  windowHeight: number,
+  insets: { top: number; bottom: number },
+  topBar: number,
+  panel: number,
+  strip = 0
+): number {
+  return Math.max(0, windowHeight - insets.top - insets.bottom - topBar - panel - strip);
+}
+
+/** Safe-area insets, by what is really being measured. */
+export const INSETS = {
+  /** iPhone 15/16 class, Dynamic Island. */
+  iphone: { top: 59, bottom: 34 },
+  /** iPhone SE: a status bar and no home indicator. */
+  iphoneSE: { top: 20, bottom: 0 },
+  /** Chromium through react-native-web, which resolves every `env()` to zero. */
+  browser: { top: 0, bottom: 0 },
+} as const;
+
 /** The least the panel may be squeezed to before the cube's floor gives way. */
 export const PANEL_LAST_RESORT = 96;
 
