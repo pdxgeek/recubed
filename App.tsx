@@ -621,7 +621,14 @@ export default function App() {
       ? Math.max(200, Math.min(sheetMin, netRoom))
       : sheetMin;
   const budget = panelBudget(bodyBox.height, wantedPanel, playback ? stripH : 0);
-  const panelBox2 = { minHeight: budget.panel, maxHeight: budget.panel };
+  // During a run the panel is a definite height, because that is round 5's
+  // finding: a percentage resolves differently on the two platforms. At rest a
+  // panel whose content needs more - the paint panel grows a row of actions
+  // once every sticker is in - may have it, up to the point where the cube's
+  // floor starts.
+  const panelBox2 = playback
+    ? { minHeight: budget.panel, maxHeight: budget.panel }
+    : { minHeight: budget.panel, maxHeight: budget.cap };
 
   const panel =
     mode === 'paint' ? (

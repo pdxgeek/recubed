@@ -114,8 +114,7 @@ export function WhySheet({
                 the wider cubing world can, and it is the one place the diagram's
                 convention is stated. */}
             <Text style={styles.legend}>
-              In the strip each of these is a diagram: the shaded band is the layer that turns,
-              the arrow is which way, and a curved arrow is the face you are looking at.
+              In the strip: the shaded band turns, the arrow says which way.
             </Text>
           </View>
         )}

@@ -112,6 +112,16 @@ export const cubeFloor = (bodyHeight: number) =>
 export interface Budget {
   /** The panel's height, as a definite number. */
   panel: number;
+  /**
+   * The most the panel may ever be, cube's floor included.
+   *
+   * A panel whose content needs more than `panel` - the paint panel with all
+   * 48 stickers in, which grows a row of actions - is allowed to have it, up to
+   * here. Pinning it to `panel` exactly pushed three buttons below the fold.
+   * During a RUN the panel takes `panel` and no more, because round 5's whole
+   * finding was that a percentage there resolves differently per platform.
+   */
+  cap: number;
   /** What is left for the canvas, strip included. */
   canvas: number;
   /** The part of the canvas the strip is not sitting on: the cube's own room. */
@@ -128,7 +138,7 @@ export interface Budget {
  * zero is worse than waiting one frame.
  */
 export function panelBudget(bodyHeight: number, wanted: number, stripHeight = 0): Budget {
-  if (!(bodyHeight > 0)) return { panel: wanted, canvas: 0, cube: 0 };
+  if (!(bodyHeight > 0)) return { panel: wanted, cap: wanted, canvas: 0, cube: 0 };
   const strip = Math.max(0, Math.round(stripHeight));
   const floor = Math.min(cubeFloor(bodyHeight), Math.max(0, bodyHeight - strip));
   const most = Math.max(0, bodyHeight - strip - floor);
@@ -142,7 +152,7 @@ export function panelBudget(bodyHeight: number, wanted: number, stripHeight = 0)
     Math.min(Math.round(wanted), most)
   );
   const canvas = bodyHeight - panel;
-  return { panel, canvas, cube: Math.max(0, canvas - strip) };
+  return { panel, cap: Math.max(panel, most), canvas, cube: Math.max(0, canvas - strip) };
 }
 
 /** Share of the body the panel takes while a step is being stepped through. */

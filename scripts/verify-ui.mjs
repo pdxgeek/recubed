@@ -826,20 +826,25 @@ try {
 
     // The running step's own moves, read off the strip while they are still
     // uncovered. Needed below to ask whether any of them come back on screen.
+    // Round 6: the strip draws each move as a DIAGRAM, so there are no letters
+    // in it to read any more. Every tile keeps its move as its accessibility
+    // label - "R prime", "R wide twice" - which is turned back into notation
+    // here. That is also a check in itself: if the glyphs ever stopped carrying
+    // their labels, this would come back empty and the section below would say
+    // so rather than passing vacuously.
     const stepMoves = await page.evaluate(() => {
-      const tokens = (n) =>
-        (n?.innerText ?? '').split(/\s+/).filter((w) => /^[URFDLBMESxyz]w?(?:2|')?$/.test(w));
-      // Climb out of the current chip until the strip is whole, stopping before
-      // the ancestor that also contains the step list.
-      let node = document.getElementById('move-current');
-      let best = [];
-      for (let i = 0; i < 8 && node; i++) {
-        if (node.querySelector?.('[aria-selected]')) break;
-        const t = tokens(node);
-        if (t.length > best.length) best = t;
-        node = node.parentElement;
+      const strip = document.getElementById('move-strip');
+      if (!strip) return [];
+      const out = [];
+      for (const n of strip.querySelectorAll('[aria-label]')) {
+        const m = /^([URFDLBMESxyz])( wide)?( rotation)?( prime| twice)?$/.exec(
+          n.getAttribute('aria-label') ?? ''
+        );
+        if (!m) continue;
+        const suffix = m[4] === ' prime' ? "'" : m[4] === ' twice' ? '2' : '';
+        out.push(`${m[1]}${m[2] ? 'w' : ''}${suffix}`);
       }
-      return best;
+      return out;
     });
 
     // 7b.4 practise mode cannot be spoiled by the transport.
@@ -894,11 +899,14 @@ try {
         return hits;
       };
       const before = await runsOf();
+      // The running step's doorway into the explanation is the strip's HEADING
+      // now - "we just show the name, and if they click the name we can open
+      // the teaching page" - not a `?` on its row. Same destination, and it is
+      // the name of the algorithm being performed rather than a punctuation
+      // mark.
       const whyLabel = await page.evaluate(() => {
-        const on = [...document.querySelectorAll('[aria-selected="true"]')].find((n) =>
-          / moves/.test(n.getAttribute('aria-label') ?? '')
-        );
-        const why = [...(on?.parentElement?.querySelectorAll('[aria-label^="Why "]') ?? [])][0];
+        const strip = document.getElementById('move-strip')?.parentElement;
+        const why = strip?.querySelector('[aria-label^="Why "]');
         return why?.getAttribute('aria-label') ?? null;
       });
       check('the running step still offers its explanation while practising', !!whyLabel, String(whyLabel));
