@@ -16,11 +16,14 @@ import { tokens } from '../ui/theme';
  *   Every glyph is the FRONT of a cube held the normal way, and the arrow is
  *   the movement you would see from there.
  *
- * Where the lit cells are says WHICH layer. Where the arrow points says WHICH
- * WAY. A curve says the layer facing you is turning in the plane of the page,
- * and a hollow grid says the layer is the one BEHIND - without which `B` and
- * `F'` would be the same picture. Two heads on one arrow is a half turn, which
- * genuinely has no direction.
+ * The arrow carries both facts on its own: WHICH layer, by the lane it runs
+ * along, and WHICH WAY, by where it points. Nothing is filled in behind it -
+ * a shaded slice under every arrow read as a selection highlight, and it was
+ * only restating what the arrow's position already said. A curve means the
+ * layer facing you is turning in the plane of the page. Two heads on one arrow
+ * is a half turn, which genuinely has no direction. A dashed outline means the
+ * layer is the one BEHIND the face you are looking at, without which `B` and
+ * `F'` would be the same picture - they draw the same arrow.
  *
  * None of those directions is written down from memory: `src/ui/glyphs.ts`
  * derives every one of them from the engine's own move table, and
@@ -168,13 +171,12 @@ export function MoveGlyph({
                       key={col}
                       style={[
                         styles.cell,
+                        g.hollow && styles.behind,
                         {
                           flex: 1,
                           marginRight: col < 2 ? m.gap * shrink : 0,
                           borderRadius: size >= 66 ? 3 : 2,
                         },
-                        on && !g.hollow && styles.cellOn,
-                        on && g.hollow && styles.cellHollow,
                       ]}
                     />
                   );
@@ -203,41 +205,19 @@ export function MoveGlyph({
 
 /** Below 44pt nine outlined cells are mud, so the grid becomes a frame and bars. */
 function Bars({ metrics: m, glyph: g }: { metrics: ReturnType<typeof glyphMetrics>; glyph: Glyph }) {
-  // A bar per row and per column of the grid that is lit ALL THE WAY ACROSS.
-  // Reading it off the cells rather than off the move keeps the two forms of
-  // the glyph saying the same thing - and it is the only way the middle slice's
-  // plus comes out as a plus.
-  const lit = new Set(g.cells.map((c) => `${c.row},${c.col}`));
-  const fullRow = (r: number) => [0, 1, 2].every((c) => lit.has(`${r},${c}`));
-  const fullCol = (c: number) => [0, 1, 2].every((r) => lit.has(`${r},${c}`));
-  const rows = [0, 1, 2].filter(fullRow);
-  const cols = [0, 1, 2].filter(fullCol);
-  const whole = rows.length === 3 && cols.length === 3;
-  const third = m.field / 3;
-  const bars: { left: number; top: number; width: number; height: number }[] = [];
-  if (whole) {
-    bars.push({ left: 0, top: 0, width: m.field, height: m.field });
-  } else {
-    for (const r of rows) bars.push({ left: 0, top: r * third, width: m.field, height: third });
-    for (const c of cols) bars.push({ left: c * third, top: 0, width: third, height: m.field });
-  }
+  // Too small for a nine-cell grid, so the tile is just the face's outline. The
+  // arrow says which layer and which way; the outline only says "this is a
+  // cube face", and says it dashed when the layer is the one behind.
   const size = g.whole ? m.field * 0.68 : m.field;
   const inset = (m.field - size) / 2;
   return (
     <View
       style={[
         styles.frame,
+        g.hollow && styles.behind,
         { position: 'absolute', left: inset, top: inset, width: size, height: size },
       ]}
-    >
-      {!g.whole &&
-        bars.map((b, i) => (
-          <View
-            key={i}
-            style={[styles.bar, g.hollow && styles.barHollow, { position: 'absolute', ...b }]}
-          />
-        ))}
-    </View>
+    />
   );
 }
 
@@ -385,11 +365,10 @@ const styles = StyleSheet.create({
   tilePast: { opacity: 0.5 },
   tileCovered: { backgroundColor: 'transparent', borderStyle: 'dashed' },
   cell: { borderWidth: 1, borderColor: line.hairline, backgroundColor: 'transparent' },
-  cellOn: { backgroundColor: accent.soft, borderColor: accent.base },
-  cellHollow: { backgroundColor: 'transparent', borderColor: accent.base, borderWidth: 1 },
   frame: { borderWidth: 1, borderColor: line.hairline, borderRadius: 2, overflow: 'hidden' },
-  bar: { backgroundColor: accent.soft, borderWidth: 1, borderColor: accent.base, borderRadius: 2 },
-  barHollow: { backgroundColor: 'transparent' },
+  // The layer being turned is the one BEHIND the face you are looking at.
+  // Without this, `B` and `F'` are the same picture - they draw the same arrow.
+  behind: { borderStyle: 'dashed', borderColor: text.tertiary },
   fallback: { ...tokens.type.monoChip, color: text.secondary },
   caption: { ...tokens.type.overline, color: text.tertiary, marginTop: 3 },
 });
